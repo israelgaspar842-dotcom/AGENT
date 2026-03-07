@@ -1,0 +1,177 @@
+// seed.js — Carga los 10 taxistas de demo en DynamoDB (LocalStack)
+// Ejecutar con: node seed.js
+
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+
+const client = new DynamoDBClient({
+  region: "us-east-1",
+  endpoint: "http://localhost:4566",
+  credentials: { accessKeyId: "test", secretAccessKey: "test" },
+});
+
+const db = DynamoDBDocumentClient.from(client);
+
+const taxistas = [
+  {
+    id: "TX001",
+    nombre: "Carlos Mendoza",
+    placa: "3456-BOL",
+    iniciales: "CM",
+    telefono: "+591 70012345",
+    rating: 4.8,
+    viajes: 1247,
+    verificado: true,
+    licencia: "LIC-2019-0034",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "5 años activo",
+    vehiculo: "Toyota Corolla 2020 — Blanco",
+    activo: true,
+  },
+  {
+    id: "TX002",
+    nombre: "Roberto Flores",
+    placa: "1872-BOL",
+    iniciales: "RF",
+    telefono: "+591 70098765",
+    rating: 4.5,
+    viajes: 893,
+    verificado: true,
+    licencia: "LIC-2020-0078",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "3 años activo",
+    vehiculo: "Nissan Sentra 2019 — Gris",
+    activo: true,
+  },
+  {
+    id: "TX003",
+    nombre: "Mario Gutierrez",
+    placa: "9021-BOL",
+    iniciales: "MG",
+    telefono: "+591 70055432",
+    rating: 4.2,
+    viajes: 542,
+    verificado: true,
+    licencia: "LIC-2021-0112",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "2 años activo",
+    vehiculo: "Hyundai Accent 2021 — Negro",
+    activo: true,
+  },
+  {
+    id: "TX004",
+    nombre: "Pedro Mamani",
+    placa: "7743-BOL",
+    iniciales: "PM",
+    telefono: "+591 70034567",
+    rating: 4.6,
+    viajes: 2104,
+    verificado: true,
+    licencia: "LIC-2017-0009",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "7 años activo",
+    vehiculo: "Kia Rio 2018 — Rojo",
+    activo: true,
+  },
+  {
+    id: "TX005",
+    nombre: "Juan Quispe",
+    placa: "5590-BOL",
+    iniciales: "JQ",
+    telefono: "+591 70067891",
+    rating: 3.9,
+    viajes: 318,
+    verificado: true,
+    licencia: "LIC-2022-0201",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "1 año activo",
+    vehiculo: "Chevrolet Aveo 2020 — Azul",
+    activo: true,
+  },
+  {
+    id: "TX006",
+    nombre: "Luis Condori",
+    placa: "4412-BOL",
+    iniciales: "LC",
+    telefono: "+591 70023456",
+    rating: 4.7,
+    viajes: 1876,
+    verificado: true,
+    licencia: "LIC-2018-0045",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "6 años activo",
+    vehiculo: "Toyota Yaris 2019 — Plata",
+    activo: true,
+  },
+  {
+    id: "TX007",
+    nombre: "Andrés Vargas",
+    placa: "6638-BOL",
+    iniciales: "AV",
+    telefono: "+591 70089012",
+    rating: 4.3,
+    viajes: 721,
+    verificado: true,
+    licencia: "LIC-2020-0156",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "3 años activo",
+    vehiculo: "Suzuki Swift 2021 — Blanco",
+    activo: true,
+  },
+  {
+    id: "TX008",
+    nombre: "Fernando Choque",
+    placa: "2285-BOL",
+    iniciales: "FC",
+    telefono: "+591 70045678",
+    rating: 4.1,
+    viajes: 445,
+    verificado: true,
+    licencia: "LIC-2021-0089",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "2 años activo",
+    vehiculo: "Renault Logan 2020 — Gris",
+    activo: true,
+  },
+  {
+    id: "TX009",
+    nombre: "Ricardo Torrez",
+    placa: "8834-BOL",
+    iniciales: "RT",
+    telefono: "+591 70078934",
+    rating: 4.9,
+    viajes: 3210,
+    verificado: true,
+    licencia: "LIC-2015-0003",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "10 años activo",
+    vehiculo: "Honda Civic 2022 — Negro",
+    activo: true,
+  },
+  {
+    id: "TX010",
+    nombre: "Miguel Rojas",
+    placa: "3317-BOL",
+    iniciales: "MR",
+    telefono: "+591 70012378",
+    rating: 4.4,
+    viajes: 654,
+    verificado: true,
+    licencia: "LIC-2019-0201",
+    antecedentes: "Sin antecedentes",
+    antiguedad: "4 años activo",
+    vehiculo: "Volkswagen Gol 2020 — Blanco",
+    activo: true,
+  },
+];
+
+async function seed() {
+  console.log("🚀 Cargando taxistas en DynamoDB...\n");
+  for (const taxista of taxistas) {
+    await db.send(new PutCommand({ TableName: "taxistas", Item: taxista }));
+    console.log(`✓ ${taxista.id} — ${taxista.nombre}`);
+  }
+  console.log("\n✅ ¡10 taxistas cargados correctamente!");
+}
+
+seed().catch(console.error);

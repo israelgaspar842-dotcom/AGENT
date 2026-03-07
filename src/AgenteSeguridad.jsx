@@ -1,32 +1,62 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
+import L from "leaflet";
+
+// Fix leaflet default marker icon
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl:       "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl:     "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
+const pulsingIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:18px;height:18px;border-radius:50%;background:#7b7bff;border:3px solid #fff;box-shadow:0 0 0 6px rgba(123,123,255,0.3);animation:mapPulse 1.5s infinite;"></div>`,
+  iconSize: [18, 18], iconAnchor: [9, 9],
+});
+
+const alertIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:22px;height:22px;border-radius:50%;background:#ff2d55;border:3px solid #fff;box-shadow:0 0 0 8px rgba(255,45,85,0.4);animation:mapPulse 0.8s infinite;"></div>`,
+  iconSize: [22, 22], iconAnchor: [11, 11],
+});
+
+function MapUpdater({ center }) {
+  const map = useMap();
+  useEffect(() => { if (center) map.flyTo(center, map.getZoom(), { duration: 1.2 }); }, [center, map]);
+  return null;
+}
 
 const DEFAULT_KEYWORDS = ["auxilio","ayuda","socorro","peligro","suéltame","sueltame","no me toques","help","para","déjame","dejame","llamen","policia","policía"];
-
 const DEFAULT_CONTACTS = [
   { name: "Mamá",    phone: "+591 7XX-XXXX", active: true  },
   { name: "Papá",    phone: "+591 6XX-XXXX", active: true  },
   { name: "Amigo/a", phone: "+591 7XX-XXXX", active: false },
 ];
-
 const DRIVER = { name: "Carlos Mendoza", plate: "3456-BOL", rating: 4.2, trips: 1247, verified: true };
 const RC = { alto:"#ff2d55", medio:"#ff9500", bajo:"#30d158" };
 
 export default function AgenteSeguridad() {
-  const [screen, setScreen]               = useState("main");
-  const [isActive, setIsActive]           = useState(false);
-  const [transcript, setTranscript]       = useState([]);
+  const [screen, setScreen]                 = useState("main");
+  const [isActive, setIsActive]             = useState(false);
+  const [transcript, setTranscript]         = useState([]);
   const [alertTriggered, setAlertTriggered] = useState(false);
-  const [alertDetails, setAlertDetails]   = useState(null);
-  const [aiAnalysis, setAiAnalysis]       = useState(null);
-  const [isAnalyzing, setIsAnalyzing]     = useState(false);
-  const [tripTime, setTripTime]           = useState(0);
-  const [detectedKw, setDetectedKw]       = useState(null);
-  const [micLevel, setMicLevel]           = useState(0);
-  const [snsLog, setSnsLog]               = useState([]);
-  const [contacts, setContacts]           = useState(DEFAULT_CONTACTS);
-  const [myName, setMyName]               = useState("Pasajero");
-  const [snsEndpoint, setSnsEndpoint]     = useState("");
-  const [editContacts, setEditContacts]   = useState(null);
+  const [alertDetails, setAlertDetails]     = useState(null);
+  const [aiAnalysis, setAiAnalysis]         = useState(null);
+  const [isAnalyzing, setIsAnalyzing]       = useState(false);
+  const [tripTime, setTripTime]             = useState(0);
+  const [detectedKw, setDetectedKw]         = useState(null);
+  const [micLevel, setMicLevel]             = useState(0);
+  const [snsLog, setSnsLog]                 = useState([]);
+  const [contacts, setContacts]             = useState(DEFAULT_CONTACTS);
+  const [myName, setMyName]                 = useState("Pasajero");
+  const [snsEndpoint, setSnsEndpoint]       = useState("");
+  const [editContacts, setEditContacts]     = useState(null);
+  const [userPos, setUserPos]               = useState(null);
+  const [accuracy, setAccuracy]             = useState(null);
+  const [gpsError, setGpsError]             = useState(null);
+  const [locationHistory, setLocationHistory] = useState([]);
 
   const recognitionRef = useRef(null);
   const timerRef       = useRef(null);
@@ -36,7 +66,26 @@ export default function AgenteSeguridad() {
   const animFrameRef   = useRef(null);
   const transcriptRef  = useRef([]);
   const alertedRef     = useRef(false);
+  const watchIdRef     = useRef(null);
 
+  // GPS
+  useEffect(() => {
+    if (!navigator.geolocation) { setGpsError("Geolocalización no disponible"); return; }
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const coords = [pos.coords.latitude, pos.coords.longitude];
+        setUserPos(coords);
+        setAccuracy(Math.round(pos.coords.accuracy));
+        setGpsError(null);
+        setLocationHistory(h => [...h.slice(-49), coords]);
+      },
+      (err) => setGpsError("Sin señal GPS"),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchIdRef.current);
+  }, []);
+
+  // Timer
   useEffect(() => {
     if (isActive) timerRef.current = setInterval(() => setTripTime(t => t+1), 1000);
     else clearInterval(timerRef.current);
@@ -93,31 +142,20 @@ export default function AgenteSeguridad() {
       const raw  = data.content?.[0]?.text || "{}";
       const obj  = JSON.parse(raw.replace(/```json|```/g,"").trim());
       setAiAnalysis(obj);
-      if (obj.accion === "alerta" && !alertedRef.current)
-        triggerAlert("IA detectó riesgo: " + obj.razon, text);
+      if (obj.accion === "alerta" && !alertedRef.current) triggerAlert("IA detectó riesgo: " + obj.razon, text);
     } catch { setAiAnalysis({ riesgo:"bajo", razon:"Sin conexión con IA", accion:"normal" }); }
     setIsAnalyzing(false);
   };
 
   const sendAlerts = async (reason, location) => {
-    const active  = contacts.filter(c => c.active);
-    const message =
-`🚨 ALERTA DE SEGURIDAD
-👤 ${myName} necesita ayuda
-📍 ${location}
-🚗 Taxi ${DRIVER.plate} | ${DRIVER.name}
-⏰ ${new Date().toLocaleTimeString()}
-📋 ${reason}
-[Agente Seguridad]`;
-
+    const active = contacts.filter(c => c.active);
+    const message = `🚨 ALERTA DE SEGURIDAD\n👤 ${myName} necesita ayuda\n📍 ${location}\n🚗 Taxi ${DRIVER.plate} | ${DRIVER.name}\n⏰ ${new Date().toLocaleTimeString()}\n📋 ${reason}\n[Agente Seguridad]`;
     for (const c of active) {
       if (snsEndpoint) {
         try {
           const r = await fetch(snsEndpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ phone: c.phone, message }) });
           setSnsLog(p => [...p, { contact:c.name, ok:r.ok, time:new Date().toLocaleTimeString(), text: r.ok?`SMS enviado a ${c.name}`:`Error con ${c.name}` }]);
-        } catch {
-          setSnsLog(p => [...p, { contact:c.name, ok:false, time:new Date().toLocaleTimeString(), text:`Sin conexión — ${c.name}` }]);
-        }
+        } catch { setSnsLog(p => [...p, { contact:c.name, ok:false, time:new Date().toLocaleTimeString(), text:`Sin conexión — ${c.name}` }]); }
       } else {
         setSnsLog(p => [...p, { contact:c.name, ok:true, sim:true, time:new Date().toLocaleTimeString(), text:`[SIMULADO] SMS a ${c.name} (${c.phone})`, message }]);
       }
@@ -128,7 +166,7 @@ export default function AgenteSeguridad() {
     if (alertedRef.current) return;
     alertedRef.current = true;
     setAlertTriggered(true);
-    const location = "Cochabamba, Bolivia (GPS activo)";
+    const location = userPos ? `GPS: ${userPos[0].toFixed(5)}, ${userPos[1].toFixed(5)}` : "Cochabamba, Bolivia";
     setAlertDetails({ reason, text, time: new Date().toLocaleTimeString(), location });
     sendAlerts(reason, location);
   };
@@ -168,45 +206,34 @@ export default function AgenteSeguridad() {
     stopMicLevel();
   };
 
-  /* ══════════ CONFIG SCREEN ══════════ */
+  /* ══════ CONFIG SCREEN ══════ */
   if (screen === "config") {
     const ec = editContacts || contacts;
     return (
       <div style={{ minHeight:"100vh", background:"#0a0a0f", color:"#e0e0e0", fontFamily:"'Courier New',monospace", display:"flex", flexDirection:"column" }}>
-        {/* header */}
         <div style={{ padding:"16px 32px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", gap:16 }}>
           <button onClick={() => { setScreen("main"); setEditContacts(null); }} style={{ background:"none", border:"1px solid #2a2a3e", borderRadius:8, color:"#7b7bff", fontSize:13, padding:"6px 14px", cursor:"pointer", fontFamily:"'Courier New',monospace" }}>← Volver</button>
           <span style={{ fontSize:12, letterSpacing:3, color:"#888" }}>CONFIGURACIÓN</span>
         </div>
-
         <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:24, padding:32, maxWidth:900, width:"100%" }}>
-          {/* left col */}
           <div>
             <SL>TU NOMBRE</SL>
             <CFInput value={myName} onChange={e=>setMyName(e.target.value)} placeholder="Tu nombre" />
-
             <SL style={{ marginTop:24 }}>ENDPOINT AWS SNS</SL>
             <CFInput value={snsEndpoint} onChange={e=>setSnsEndpoint(e.target.value)} placeholder="https://xxx.execute-api.amazonaws.com/prod/alert" small />
-            <div style={{ fontSize:11, color:"#555", marginTop:6, lineHeight:1.7 }}>
-              Sin endpoint los SMS se simulan — el mensaje se muestra en el log pero no se envía realmente.
-            </div>
+            <div style={{ fontSize:11, color:"#555", marginTop:6, lineHeight:1.7 }}>Sin endpoint los SMS se simulan.</div>
           </div>
-
-          {/* right col — contacts */}
           <div>
             <SL>CONTACTOS DE EMERGENCIA</SL>
             {ec.map((c,i) => (
               <div key={i} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10 }}>
-                <input value={c.name} onChange={e=>{ const u=[...ec]; u[i]={...c,name:e.target.value}; setEditContacts(u); }}
-                  placeholder="Nombre" style={cfInput()} />
-                <input value={c.phone} onChange={e=>{ const u=[...ec]; u[i]={...c,phone:e.target.value}; setEditContacts(u); }}
-                  placeholder="+591XXXXXXXXX" style={cfInput()} />
+                <input value={c.name} onChange={e=>{ const u=[...ec]; u[i]={...c,name:e.target.value}; setEditContacts(u); }} placeholder="Nombre" style={cfInput()} />
+                <input value={c.phone} onChange={e=>{ const u=[...ec]; u[i]={...c,phone:e.target.value}; setEditContacts(u); }} placeholder="+591XXXXXXXXX" style={cfInput()} />
                 <button onClick={()=>{ const u=[...ec]; u[i]={...c,active:!c.active}; setEditContacts(u); }}
                   style={{ padding:"8px 12px", background:c.active?"rgba(48,209,88,0.15)":"rgba(255,255,255,0.05)", border:`1px solid ${c.active?"#30d158":"#2a2a3e"}`, borderRadius:8, color:c.active?"#30d158":"#666", fontSize:11, cursor:"pointer", fontFamily:"'Courier New',monospace" }}>
                   {c.active?"ON":"OFF"}
                 </button>
-                <button onClick={()=>setEditContacts(ec.filter((_,j)=>j!==i))}
-                  style={{ padding:"8px 10px", background:"rgba(255,45,85,0.1)", border:"1px solid #ff2d5530", borderRadius:8, color:"#ff2d55", fontSize:11, cursor:"pointer" }}>✕</button>
+                <button onClick={()=>setEditContacts(ec.filter((_,j)=>j!==i))} style={{ padding:"8px 10px", background:"rgba(255,45,85,0.1)", border:"1px solid #ff2d5530", borderRadius:8, color:"#ff2d55", fontSize:11, cursor:"pointer" }}>✕</button>
               </div>
             ))}
             <button onClick={()=>setEditContacts([...ec,{name:"",phone:"",active:true}])}
@@ -223,33 +250,41 @@ export default function AgenteSeguridad() {
     );
   }
 
-  /* ══════════ MAIN DASHBOARD ══════════ */
-  return (
-    <div style={{ width:"100vw", minHeight:"100vh", background:"#0a0a0f", fontFamily:"'Courier New',monospace", color:"#e0e0e0", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+  /* ══════ MAIN DASHBOARD ══════ */
+  const defaultCenter = userPos || [-17.3895, -66.1568];
 
-      {/* ── TOP BAR ── */}
-      <div style={{ background:alertTriggered?"rgba(255,45,85,0.12)":"rgba(255,255,255,0.02)", borderBottom:`2px solid ${alertTriggered?"#ff2d55":"#1a1a2e"}`, padding:"14px 32px", display:"flex", alignItems:"center", justifyContent:"space-between", transition:"all 0.5s", flexShrink:0 }}>
+  return (
+    <div style={{ width:"100vw", height:"100vh", background:"#0a0a0f", fontFamily:"'Courier New',monospace", color:"#e0e0e0", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+
+      {/* TOP BAR */}
+      <div style={{ background:alertTriggered?"rgba(255,45,85,0.12)":"rgba(255,255,255,0.02)", borderBottom:`2px solid ${alertTriggered?"#ff2d55":"#1a1a2e"}`, padding:"11px 28px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <div style={{ width:10, height:10, borderRadius:"50%", background:isActive?(alertTriggered?"#ff2d55":"#30d158"):"#333", boxShadow:isActive?`0 0 14px ${alertTriggered?"#ff2d55":"#30d158"}`:"none", animation:isActive?"pulse 1.5s infinite":"none" }} />
-          <span style={{ fontSize:13, letterSpacing:4, color:"#777" }}>AGENTE DE SEGURIDAD</span>
-          {isActive && <span style={{ fontSize:12, color:"#30d158", marginLeft:8 }}>⏱ {fmt(tripTime)}</span>}
+          <div style={{ width:9, height:9, borderRadius:"50%", background:isActive?(alertTriggered?"#ff2d55":"#30d158"):"#333", boxShadow:isActive?`0 0 12px ${alertTriggered?"#ff2d55":"#30d158"}`:"none", animation:isActive?"pulse 1.5s infinite":"none" }} />
+          <span style={{ fontSize:12, letterSpacing:4, color:"#777" }}>AGENTE DE SEGURIDAD</span>
+          {isActive && <span style={{ fontSize:11, color:"#30d158", marginLeft:8 }}>⏱ {fmt(tripTime)}</span>}
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          {alertTriggered && <span style={{ fontSize:12, color:"#ff2d55", animation:"blink 1s infinite" }}>🚨 ALERTA ACTIVA</span>}
-          <button onClick={()=>{ setEditContacts(null); setScreen("config"); }} style={{ background:"none", border:"1px solid #2a2a3e", borderRadius:8, color:"#666", fontSize:11, padding:"6px 14px", cursor:"pointer", fontFamily:"'Courier New',monospace", letterSpacing:1 }}>⚙ CONFIGURACIÓN</button>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 12px", borderRadius:20, background:userPos?"rgba(48,209,88,0.08)":"rgba(255,149,0,0.08)", border:`1px solid ${userPos?"#30d15840":"#ff950040"}` }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:userPos?"#30d158":"#ff9500", animation:userPos?"pulse 2s infinite":"none" }} />
+            <span style={{ fontSize:9, color:userPos?"#30d158":"#ff9500" }}>
+              {userPos ? `GPS ±${accuracy}m` : (gpsError || "Buscando GPS...")}
+            </span>
+          </div>
+          {alertTriggered && <span style={{ fontSize:11, color:"#ff2d55", animation:"blink 1s infinite" }}>🚨 ALERTA ACTIVA</span>}
+          <button onClick={()=>{ setEditContacts(null); setScreen("config"); }} style={{ background:"none", border:"1px solid #2a2a3e", borderRadius:8, color:"#666", fontSize:10, padding:"5px 12px", cursor:"pointer", fontFamily:"'Courier New',monospace" }}>⚙ CONFIG</button>
         </div>
       </div>
 
-      {/* ── ALERT BANNER ── */}
+      {/* ALERT BANNER */}
       {alertTriggered && alertDetails && (
-        <div style={{ background:"rgba(255,45,85,0.1)", borderBottom:"1px solid #ff2d5550", padding:"12px 32px", display:"flex", alignItems:"center", gap:24, animation:"flashIn .3s ease" }}>
+        <div style={{ background:"rgba(255,45,85,0.1)", borderBottom:"1px solid #ff2d5550", padding:"9px 28px", display:"flex", alignItems:"center", gap:20, flexShrink:0 }}>
           <div>
-            <div style={{ color:"#ff2d55", fontSize:14, fontWeight:"bold" }}>🚨 {alertDetails.reason}</div>
-            <div style={{ fontSize:11, color:"#888", marginTop:2 }}>📍 {alertDetails.location} · {alertDetails.time}</div>
+            <div style={{ color:"#ff2d55", fontSize:12, fontWeight:"bold" }}>🚨 {alertDetails.reason}</div>
+            <div style={{ fontSize:10, color:"#888", marginTop:1 }}>📍 {alertDetails.location} · {alertDetails.time}</div>
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
             {snsLog.map((l,i) => (
-              <div key={i} style={{ background:l.ok?"rgba(48,209,88,0.1)":"rgba(255,45,85,0.1)", border:`1px solid ${l.ok?"#30d158":"#ff2d55"}`, borderRadius:20, padding:"4px 12px", fontSize:11, color:l.ok?"#30d158":"#ff2d55" }}>
+              <div key={i} style={{ background:l.ok?"rgba(48,209,88,0.1)":"rgba(255,45,85,0.1)", border:`1px solid ${l.ok?"#30d158":"#ff2d55"}`, borderRadius:20, padding:"3px 10px", fontSize:10, color:l.ok?"#30d158":"#ff2d55" }}>
                 {l.ok?`✓ ${l.contact}`:`✗ ${l.contact}`}{l.sim?" (sim)":""}
               </div>
             ))}
@@ -257,148 +292,172 @@ export default function AgenteSeguridad() {
         </div>
       )}
 
-      {/* ── MAIN GRID ── */}
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"300px 1fr 280px", gridTemplateRows:"auto 1fr", gap:0, overflow:"hidden" }}>
+      {/* GRID 4 columnas */}
+      <div style={{ flex:1, display:"grid", gridTemplateColumns:"250px 1fr 360px 240px", gap:0, overflow:"hidden", minHeight:0 }}>
 
-        {/* ── COL 1: Driver + Contacts ── */}
+        {/* COL 1: Driver + Contacts */}
         <div style={{ borderRight:"1px solid #1a1a2e", display:"flex", flexDirection:"column", overflowY:"auto" }}>
-          {/* Driver card */}
-          <div style={{ padding:20, borderBottom:"1px solid #1a1a2e" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>CONDUCTOR</div>
-            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:16 }}>
-              <div style={{ width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:"bold", color:"#7b7bff", border:"2px solid #3a3a9e", flexShrink:0 }}>CM</div>
+          <div style={{ padding:16, borderBottom:"1px solid #1a1a2e" }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:12 }}>CONDUCTOR</div>
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+              <div style={{ width:46, height:46, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:"bold", color:"#7b7bff", border:"2px solid #3a3a9e", flexShrink:0 }}>CM</div>
               <div>
-                <div style={{ fontSize:15, fontWeight:"bold", color:"#e0e0e0" }}>{DRIVER.name}</div>
-                <div style={{ fontSize:11, color:"#888", marginTop:2 }}>Placa: {DRIVER.plate}</div>
-                <div style={{ fontSize:11, color:"#888" }}>{DRIVER.trips} viajes completados</div>
+                <div style={{ fontSize:13, fontWeight:"bold" }}>{DRIVER.name}</div>
+                <div style={{ fontSize:10, color:"#888" }}>Placa: {DRIVER.plate}</div>
+                <div style={{ fontSize:10, color:"#888" }}>{DRIVER.trips} viajes</div>
               </div>
             </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <div style={{ flex:1, background:"rgba(255,214,10,0.08)", border:"1px solid #ffd60a30", borderRadius:8, padding:"10px", textAlign:"center" }}>
-                <div style={{ fontSize:18, color:"#ffd60a" }}>★ {DRIVER.rating}</div>
-                <div style={{ fontSize:10, color:"#666", marginTop:2 }}>Calificación</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <div style={{ flex:1, background:"rgba(255,214,10,0.08)", border:"1px solid #ffd60a30", borderRadius:8, padding:"8px", textAlign:"center" }}>
+                <div style={{ fontSize:15, color:"#ffd60a" }}>★ {DRIVER.rating}</div>
+                <div style={{ fontSize:9, color:"#666", marginTop:1 }}>Rating</div>
               </div>
-              {DRIVER.verified && (
-                <div style={{ flex:1, background:"rgba(48,209,88,0.08)", border:"1px solid #30d15830", borderRadius:8, padding:"10px", textAlign:"center" }}>
-                  <div style={{ fontSize:16, color:"#30d158" }}>✓</div>
-                  <div style={{ fontSize:10, color:"#666", marginTop:2 }}>Verificado</div>
-                </div>
-              )}
+              <div style={{ flex:1, background:"rgba(48,209,88,0.08)", border:"1px solid #30d15830", borderRadius:8, padding:"8px", textAlign:"center" }}>
+                <div style={{ fontSize:13, color:"#30d158" }}>✓</div>
+                <div style={{ fontSize:9, color:"#666", marginTop:1 }}>Verificado</div>
+              </div>
             </div>
           </div>
-
-          {/* Contacts */}
-          <div style={{ padding:20, flex:1 }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>CONTACTOS DE EMERGENCIA</div>
+          <div style={{ padding:16, flex:1 }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:12 }}>CONTACTOS</div>
             {contacts.map((c,i) => (
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", background:"rgba(255,255,255,0.03)", borderRadius:8, marginBottom:8, border:"1px solid #1e1e2e", opacity:c.active?1:0.4 }}>
-                <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(123,123,255,0.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, border:"1px solid #3a3a9e", flexShrink:0 }}>👤</div>
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", background:"rgba(255,255,255,0.03)", borderRadius:8, marginBottom:6, border:"1px solid #1e1e2e", opacity:c.active?1:0.4 }}>
+                <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(123,123,255,0.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, border:"1px solid #3a3a9e", flexShrink:0 }}>👤</div>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12, color:"#e0e0e0" }}>{c.name}</div>
-                  <div style={{ fontSize:10, color:"#666" }}>{c.phone}</div>
+                  <div style={{ fontSize:11, color:"#e0e0e0" }}>{c.name}</div>
+                  <div style={{ fontSize:9, color:"#666" }}>{c.phone}</div>
                 </div>
-                <div style={{ fontSize:9, padding:"2px 7px", borderRadius:10, background:c.active?"rgba(48,209,88,0.1)":"rgba(255,255,255,0.05)", color:c.active?"#30d158":"#555", border:`1px solid ${c.active?"#30d15840":"#2a2a3e"}` }}>
+                <div style={{ fontSize:8, padding:"2px 6px", borderRadius:10, background:c.active?"rgba(48,209,88,0.1)":"rgba(255,255,255,0.05)", color:c.active?"#30d158":"#555", border:`1px solid ${c.active?"#30d15840":"#2a2a3e"}` }}>
                   {c.active?"ON":"OFF"}
                 </div>
               </div>
             ))}
-            <button onClick={()=>setScreen("config")} style={{ width:"100%", padding:"8px", background:"rgba(123,123,255,0.06)", border:"1px dashed #2a2a4e", borderRadius:8, color:"#7b7bff", fontSize:11, cursor:"pointer", fontFamily:"'Courier New',monospace", marginTop:4 }}>
+            <button onClick={()=>setScreen("config")} style={{ width:"100%", padding:"7px", background:"rgba(123,123,255,0.06)", border:"1px dashed #2a2a4e", borderRadius:8, color:"#7b7bff", fontSize:10, cursor:"pointer", fontFamily:"'Courier New',monospace", marginTop:4 }}>
               ✎ Editar contactos
             </button>
           </div>
         </div>
 
-        {/* ── COL 2: Transcript + AI ── */}
+        {/* COL 2: Transcript + AI + Controls */}
         <div style={{ display:"flex", flexDirection:"column", overflow:"hidden" }}>
-          {/* AI Analysis bar */}
-          <div style={{ padding:"16px 24px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", gap:20, background:"rgba(123,123,255,0.03)" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, flexShrink:0 }}>ANÁLISIS IA</div>
+          <div style={{ padding:"11px 18px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", gap:14, background:"rgba(123,123,255,0.03)", flexShrink:0 }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, flexShrink:0 }}>ANÁLISIS IA</div>
             {isAnalyzing
-              ? <div style={{ fontSize:12, color:"#7b7bff" }}>⟳ Analizando...</div>
+              ? <div style={{ fontSize:11, color:"#7b7bff" }}>⟳ Analizando...</div>
               : aiAnalysis
-                ? <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ padding:"4px 14px", borderRadius:20, fontSize:11, background:`${RC[aiAnalysis.riesgo]}15`, color:RC[aiAnalysis.riesgo], border:`1px solid ${RC[aiAnalysis.riesgo]}40` }}>
+                ? <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <div style={{ padding:"3px 12px", borderRadius:20, fontSize:10, background:`${RC[aiAnalysis.riesgo]}15`, color:RC[aiAnalysis.riesgo], border:`1px solid ${RC[aiAnalysis.riesgo]}40` }}>
                       Riesgo {aiAnalysis.riesgo?.toUpperCase()}
                     </div>
-                    <span style={{ fontSize:12, color:"#aaa" }}>{aiAnalysis.razon}</span>
+                    <span style={{ fontSize:11, color:"#aaa" }}>{aiAnalysis.razon}</span>
                   </div>
-                : <div style={{ fontSize:12, color:"#444" }}>{isActive?"Esperando audio para analizar...":"Inicia el monitoreo para activar el agente IA"}</div>
+                : <div style={{ fontSize:11, color:"#444" }}>{isActive?"Esperando audio...":"Inicia el monitoreo para activar la IA"}</div>
             }
           </div>
-
-          {/* Transcript */}
-          <div style={{ flex:1, padding:"20px 24px", overflowY:"auto" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:16 }}>TRANSCRIPCIÓN EN VIVO</div>
+          <div style={{ flex:1, padding:"14px 18px", overflowY:"auto" }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:12 }}>TRANSCRIPCIÓN EN VIVO</div>
             {transcript.length === 0
-              ? <div style={{ textAlign:"center", padding:"60px 20px", color:"#2a2a3e" }}>
-                  <div style={{ fontSize:40, marginBottom:12 }}>🎙</div>
-                  <div style={{ fontSize:13, color:"#444" }}>{isActive?"Habla cerca del micrófono...":"Presiona INICIAR MONITOREO para activar"}</div>
+              ? <div style={{ textAlign:"center", padding:"50px 20px" }}>
+                  <div style={{ fontSize:34, marginBottom:10 }}>🎙</div>
+                  <div style={{ fontSize:12, color:"#333" }}>{isActive?"Habla cerca del micrófono...":"Presiona INICIAR para activar"}</div>
                 </div>
               : transcript.map((t,i) => (
-                  <div key={t.id} style={{ padding:"10px 14px", marginBottom:8, background:"rgba(255,255,255,0.02)", borderRadius:8, borderLeft:`3px solid ${i===transcript.length-1?"#7b7bff":"#1e1e2e"}`, opacity:0.4+(i/transcript.length)*0.6, transition:"opacity 0.3s" }}>
-                    <div style={{ fontSize:10, color:"#555", marginBottom:4 }}>{t.time}</div>
-                    <div style={{ fontSize:13, color:"#ccc", lineHeight:1.5 }}>{t.text}</div>
+                  <div key={t.id} style={{ padding:"8px 11px", marginBottom:6, background:"rgba(255,255,255,0.02)", borderRadius:8, borderLeft:`3px solid ${i===transcript.length-1?"#7b7bff":"#1e1e2e"}`, opacity:0.4+(i/transcript.length)*0.6 }}>
+                    <div style={{ fontSize:9, color:"#555", marginBottom:3 }}>{t.time}</div>
+                    <div style={{ fontSize:12, color:"#ccc", lineHeight:1.5 }}>{t.text}</div>
                   </div>
                 ))
             }
           </div>
-
-          {/* Bottom controls */}
-          <div style={{ padding:"16px 24px", borderTop:"1px solid #1a1a2e", display:"flex", gap:12 }}>
+          <div style={{ padding:"12px 18px", borderTop:"1px solid #1a1a2e", display:"flex", gap:10, flexShrink:0 }}>
             {!isActive
-              ? <button onClick={handleStart} style={{ flex:1, padding:"14px", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", border:"1px solid #3a3a9e", borderRadius:12, color:"#7b7bff", fontSize:13, letterSpacing:3, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>
-                  🎙 INICIAR MONITOREO DE VIAJE
+              ? <button onClick={handleStart} style={{ flex:1, padding:"13px", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", border:"1px solid #3a3a9e", borderRadius:12, color:"#7b7bff", fontSize:12, letterSpacing:3, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>
+                  🎙 INICIAR MONITOREO
                 </button>
               : <>
-                  <button onClick={handleStop} style={{ flex:1, padding:"13px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5540", borderRadius:12, color:"#ff2d55", fontSize:12, cursor:"pointer", fontFamily:"'Courier New',monospace" }}>■ TERMINAR VIAJE</button>
+                  <button onClick={handleStop} style={{ flex:1, padding:"11px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5540", borderRadius:12, color:"#ff2d55", fontSize:11, cursor:"pointer", fontFamily:"'Courier New',monospace" }}>■ TERMINAR</button>
                   {!alertTriggered && (
-                    <button onClick={()=>triggerAlert("SOS Manual activado","")} style={{ padding:"13px 28px", background:"rgba(255,45,85,0.2)", border:"2px solid #ff2d55", borderRadius:12, color:"#ff2d55", fontSize:14, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>🚨 SOS</button>
+                    <button onClick={()=>triggerAlert("SOS Manual activado","")} style={{ padding:"11px 22px", background:"rgba(255,45,85,0.2)", border:"2px solid #ff2d55", borderRadius:12, color:"#ff2d55", fontSize:13, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>🚨 SOS</button>
                   )}
                 </>
             }
           </div>
         </div>
 
-        {/* ── COL 3: Mic + SMS Log ── */}
-        <div style={{ borderLeft:"1px solid #1a1a2e", display:"flex", flexDirection:"column", overflow:"hidden" }}>
-          {/* Mic visualizer */}
-          <div style={{ padding:20, borderBottom:"1px solid #1a1a2e" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>NIVEL DE AUDIO</div>
-            <div style={{ display:"flex", gap:3, alignItems:"flex-end", height:50, marginBottom:10 }}>
-              {Array.from({length:20}).map((_,i) => (
-                <div key={i} style={{ flex:1, background: (micLevel/100)*20 > i ? (micLevel>70?"#ff2d55":micLevel>40?"#ff9500":"#30d158") : "#1a1a2e", borderRadius:2, height:`${20+Math.sin(i*0.8)*15}%`, transition:"background 0.1s", minHeight:4 }} />
-              ))}
-            </div>
-            <div style={{ fontSize:10, color:isActive?"#30d158":"#555", textAlign:"center" }}>
-              {isActive?(micLevel<5?"Silencio...":"● Escuchando"):"Inactivo"}
-            </div>
-            {detectedKw && (
-              <div style={{ marginTop:10, padding:"8px 10px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5530", borderRadius:8, fontSize:11, color:"#ff2d55", textAlign:"center" }}>
-                ⚡ "{detectedKw}" detectada
+        {/* COL 3: MAPA */}
+        <div style={{ borderLeft:"1px solid #1a1a2e", borderRight:"1px solid #1a1a2e", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          <div style={{ padding:"11px 16px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3 }}>UBICACIÓN EN TIEMPO REAL</div>
+            {userPos && <div style={{ fontSize:9, color:"#444" }}>{userPos[0].toFixed(4)}, {userPos[1].toFixed(4)}</div>}
+          </div>
+          <div style={{ flex:1, position:"relative", minHeight:0 }}>
+            {userPos ? (
+              <MapContainer center={defaultCenter} zoom={16} style={{ width:"100%", height:"100%" }} zoomControl={true}>
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap' />
+                <MapUpdater center={userPos} />
+                {accuracy && (
+                  <Circle center={userPos} radius={accuracy}
+                    pathOptions={{ color:alertTriggered?"#ff2d55":"#7b7bff", fillColor:alertTriggered?"#ff2d55":"#7b7bff", fillOpacity:0.08, weight:1.5 }} />
+                )}
+                <Marker position={userPos} icon={alertTriggered ? alertIcon : pulsingIcon}>
+                  <Popup>
+                    <div style={{ fontFamily:"sans-serif", fontSize:12 }}>
+                      <strong>{myName}</strong><br/>
+                      🚗 {DRIVER.plate}<br/>
+                      📍 ±{accuracy}m
+                    </div>
+                  </Popup>
+                </Marker>
+              </MapContainer>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", color:"#333" }}>
+                <div style={{ fontSize:30, marginBottom:10 }}>🗺️</div>
+                <div style={{ fontSize:11, color:"#444", textAlign:"center", padding:"0 20px" }}>{gpsError || "Obteniendo ubicación GPS..."}</div>
+                {gpsError && <div style={{ fontSize:9, color:"#555", marginTop:6, textAlign:"center", padding:"0 20px" }}>Permite el acceso a ubicación en tu navegador</div>}
               </div>
             )}
           </div>
+          <div style={{ padding:"8px 16px", borderTop:"1px solid #1a1a2e", display:"flex", justifyContent:"space-between", flexShrink:0 }}>
+            <div style={{ fontSize:9, color:"#555" }}>{locationHistory.length > 0 ? `${locationHistory.length} pts registrados` : "Sin historial"}</div>
+            <div style={{ fontSize:9, color:userPos?"#30d158":"#ff9500" }}>{userPos?`● Activo ±${accuracy}m`:"○ Sin señal"}</div>
+          </div>
+        </div>
 
-          {/* Keywords */}
-          <div style={{ padding:"16px 20px", borderBottom:"1px solid #1a1a2e" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:12 }}>KEYWORDS ACTIVAS</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+        {/* COL 4: Mic + Keywords + SMS Log */}
+        <div style={{ display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          <div style={{ padding:14, borderBottom:"1px solid #1a1a2e", flexShrink:0 }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:10 }}>NIVEL DE AUDIO</div>
+            <div style={{ display:"flex", gap:2, alignItems:"flex-end", height:40, marginBottom:6 }}>
+              {Array.from({length:24}).map((_,i) => (
+                <div key={i} style={{ flex:1, background:(micLevel/100)*24>i?(micLevel>70?"#ff2d55":micLevel>40?"#ff9500":"#30d158"):"#1a1a2e", borderRadius:2, height:`${15+Math.sin(i*0.7)*12}%`, transition:"background 0.1s", minHeight:3 }} />
+              ))}
+            </div>
+            <div style={{ fontSize:9, color:isActive?"#30d158":"#555", textAlign:"center" }}>
+              {isActive?(micLevel<5?"Silencio...":"● Escuchando"):"Inactivo"}
+            </div>
+            {detectedKw && (
+              <div style={{ marginTop:7, padding:"5px 8px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5530", borderRadius:8, fontSize:10, color:"#ff2d55", textAlign:"center" }}>
+                ⚡ "{detectedKw}"
+              </div>
+            )}
+          </div>
+          <div style={{ padding:"12px 14px", borderBottom:"1px solid #1a1a2e", flexShrink:0 }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:8 }}>KEYWORDS</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
               {DEFAULT_KEYWORDS.map(kw => (
-                <div key={kw} style={{ padding:"4px 10px", borderRadius:12, background:detectedKw===kw?"rgba(255,45,85,0.15)":"rgba(255,255,255,0.04)", border:`1px solid ${detectedKw===kw?"#ff2d55":"#1e1e2e"}`, color:detectedKw===kw?"#ff2d55":"#666", fontSize:10 }}>{kw}</div>
+                <div key={kw} style={{ padding:"3px 7px", borderRadius:10, background:detectedKw===kw?"rgba(255,45,85,0.15)":"rgba(255,255,255,0.04)", border:`1px solid ${detectedKw===kw?"#ff2d55":"#1e1e2e"}`, color:detectedKw===kw?"#ff2d55":"#555", fontSize:9 }}>{kw}</div>
               ))}
             </div>
           </div>
-
-          {/* SMS Log */}
-          <div style={{ flex:1, padding:"16px 20px", overflowY:"auto" }}>
-            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:12 }}>SMS LOG</div>
+          <div style={{ flex:1, padding:"12px 14px", overflowY:"auto" }}>
+            <div style={{ fontSize:9, color:"#555", letterSpacing:3, marginBottom:8 }}>SMS LOG</div>
             {snsLog.length===0
-              ? <div style={{ fontSize:11, color:"#2a2a3e", textAlign:"center", paddingTop:20 }}>Sin actividad aún</div>
+              ? <div style={{ fontSize:10, color:"#222", textAlign:"center", paddingTop:14 }}>Sin actividad</div>
               : snsLog.map((l,i) => (
-                  <div key={i} style={{ padding:"9px 11px", background:l.ok?"rgba(48,209,88,0.05)":"rgba(255,45,85,0.05)", border:`1px solid ${l.ok?"#30d15830":"#ff2d5530"}`, borderRadius:8, marginBottom:8 }}>
-                    <div style={{ fontSize:11, color:l.ok?"#30d158":"#ff2d55" }}>{l.text}</div>
-                    {l.sim && <div style={{ fontSize:9, color:"#555", marginTop:3 }}>modo simulado</div>}
-                    <div style={{ fontSize:9, color:"#444", marginTop:2 }}>{l.time}</div>
+                  <div key={i} style={{ padding:"7px 9px", background:l.ok?"rgba(48,209,88,0.05)":"rgba(255,45,85,0.05)", border:`1px solid ${l.ok?"#30d15830":"#ff2d5530"}`, borderRadius:8, marginBottom:6 }}>
+                    <div style={{ fontSize:10, color:l.ok?"#30d158":"#ff2d55" }}>{l.text}</div>
+                    {l.sim && <div style={{ fontSize:8, color:"#444", marginTop:2 }}>simulado</div>}
+                    <div style={{ fontSize:8, color:"#333", marginTop:1 }}>{l.time}</div>
                   </div>
                 ))
             }
@@ -410,12 +469,19 @@ export default function AgenteSeguridad() {
         @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.4)}}
         @keyframes flashIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
         @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+        @keyframes mapPulse{0%,100%{box-shadow:0 0 0 4px rgba(123,123,255,0.3)}50%{box-shadow:0 0 0 12px rgba(123,123,255,0.05)}}
         *{box-sizing:border-box;margin:0;padding:0}
         html,body,#root{width:100%;height:100%;overflow:hidden}
         ::-webkit-scrollbar{width:4px}
         ::-webkit-scrollbar-thumb{background:#2a2a3e;border-radius:2px}
         input::placeholder{color:#333}
         input:focus{outline:none;border-color:#3a3a9e !important}
+        .leaflet-container{background:#0d0d1a !important}
+        .leaflet-tile{filter:brightness(0.8) saturate(0.6) hue-rotate(200deg)}
+        .leaflet-control-zoom a{background:#1a1a2e !important;color:#7b7bff !important;border-color:#2a2a3e !important}
+        .leaflet-popup-content-wrapper{background:#1a1a2e;border:1px solid #2a2a3e;color:#e0e0e0;font-family:'Courier New',monospace}
+        .leaflet-popup-tip{background:#1a1a2e}
+        .leaflet-attribution-flag{display:none}
       `}</style>
     </div>
   );
