@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-
-const DEFAULT_KEYWORDS = [
-  "auxilio","ayuda","socorro","peligro","suéltame","sueltame",
-  "no me toques","help","para","déjame","dejame","llamen","policia","policía"
-];
+const DEFAULT_KEYWORDS = ["auxilio","ayuda","socorro","peligro","suéltame","sueltame","no me toques","help","para","déjame","dejame","llamen","policia","policía"];
 
 const DEFAULT_CONTACTS = [
   { name: "Mamá",    phone: "+591 7XX-XXXX", active: true  },
@@ -12,839 +8,468 @@ const DEFAULT_CONTACTS = [
   { name: "Amigo/a", phone: "+591 7XX-XXXX", active: false },
 ];
 
-const RISK_COLOR = { alto: "#e63950", medio: "#f5a623", bajo: "#27c97a" };
-const RISK_BG    = { alto: "rgba(230,57,80,0.12)", medio: "rgba(245,166,35,0.12)", bajo: "rgba(39,201,122,0.12)" };
 
-const fmt = s => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+const RC = { alto:"#ff2d55", medio:"#ff9500", bajo:"#30d158" };
 
-const getInitials = name => {
-  if (!name || name === "Conductor no identificado") return "?";
-  const w = name.trim().split(" ");
-  return w.length > 1 ? (w[0][0] + w[1][0]).toUpperCase() : name.substring(0, 2).toUpperCase();
-};
-
-/* ─────────────────────────────────────────────
-   GLOBAL STYLES (injected once)
-───────────────────────────────────────────── */
-const GLOBAL_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
-
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { width: 100%; height: 100%; overflow: hidden; background: #08090c; }
-  ::-webkit-scrollbar { width: 3px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a2d35; border-radius: 2px; }
-  input::placeholder { color: #35383f; }
-  input:focus { outline: none; }
-
-  @keyframes sos-pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(230,57,80,0.7); }
-    60%  { box-shadow: 0 0 0 18px rgba(230,57,80,0); }
-    100% { box-shadow: 0 0 0 0 rgba(230,57,80,0); }
-  }
-  @keyframes status-blink {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.25; }
-  }
-  @keyframes scan-line {
-    0%   { transform: translateY(-100%); }
-    100% { transform: translateY(400%); }
-  }
-  @keyframes slide-in {
-    from { opacity: 0; transform: translateY(-8px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-  @keyframes bar-grow {
-    from { transform: scaleY(0.3); }
-    to   { transform: scaleY(1); }
-  }
-`;
-
-/* ─────────────────────────────────────────────
-   DESIGN TOKENS
-───────────────────────────────────────────── */
-const T = {
-  bg:       "#08090c",
-  surface:  "#0e1016",
-  panel:    "#11131a",
-  border:   "#1c1f28",
-  borderHi: "#2e3240",
-  text:     "#d4d8e2",
-  textDim:  "#5a5f6e",
-  textMid:  "#8b909e",
-  accent:   "#e63950",
-  accentLo: "rgba(230,57,80,0.15)",
-  green:    "#27c97a",
-  greenLo:  "rgba(39,201,122,0.1)",
-  amber:    "#f5a623",
-  blue:     "#4d9de0",
-  blueLo:   "rgba(77,157,224,0.1)",
-  font:     "'Rajdhani', sans-serif",
-  mono:     "'Share Tech Mono', monospace",
-};
-
-/* ─────────────────────────────────────────────
-   MICRO-COMPONENTS
-───────────────────────────────────────────── */
-const Label = ({ children, style }) => (
-  <div style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.18em", color: T.textDim, marginBottom: 10, textTransform: "uppercase", ...style }}>
-    {children}
-  </div>
-);
-
-const Pill = ({ children, color = T.green, bg }) => (
-  <span style={{
-    display: "inline-flex", alignItems: "center", gap: 5,
-    fontFamily: T.mono, fontSize: 10, letterSpacing: "0.1em",
-    padding: "3px 10px", borderRadius: 3,
-    background: bg || `${color}18`, color, border: `1px solid ${color}35`,
-  }}>
-    {children}
-  </span>
-);
-
-const TacticalInput = ({ value, onChange, placeholder, style }) => (
-  <input
-    value={value} onChange={onChange} placeholder={placeholder}
-    style={{
-      width: "100%", padding: "9px 12px",
-      background: T.surface, border: `1px solid ${T.border}`,
-      borderRadius: 3, color: T.text,
-      fontFamily: T.mono, fontSize: 12,
-      transition: "border-color 0.2s",
-      ...style,
-    }}
-    onFocus={e => e.target.style.borderColor = T.borderHi}
-    onBlur={e => e.target.style.borderColor = T.border}
-  />
-);
-
-/* Divider with optional label */
-const Divider = ({ label }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0" }}>
-    <div style={{ flex: 1, height: 1, background: T.border }} />
-    {label && <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, letterSpacing: "0.15em" }}>{label}</span>}
-    <div style={{ flex: 1, height: 1, background: T.border }} />
-  </div>
-);
-
-/* ─────────────────────────────────────────────
-   CONFIG SCREEN
-───────────────────────────────────────────── */
-function ConfigScreen({ contacts, myName, snsEndpoint, onSave, onBack }) {
-  const [localContacts, setLocalContacts] = useState(contacts.map(c => ({ ...c })));
-  const [localName, setLocalName]         = useState(myName);
-  const [localSns,  setLocalSns]          = useState(snsEndpoint);
-
-  const updateContact = (i, field, val) =>
-    setLocalContacts(prev => prev.map((c, j) => j === i ? { ...c, [field]: val } : c));
-
-  return (
-    <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: T.font, display: "flex", flexDirection: "column" }}>
-      {/* Header */}
-      <div style={{ padding: "14px 28px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 16 }}>
-        <button
-          onClick={onBack}
-          style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textMid, fontSize: 12, fontFamily: T.mono, padding: "6px 14px", cursor: "pointer", letterSpacing: "0.1em", transition: "border-color 0.2s, color 0.2s" }}
-          onMouseEnter={e => { e.target.style.borderColor = T.borderHi; e.target.style.color = T.text; }}
-          onMouseLeave={e => { e.target.style.borderColor = T.border;   e.target.style.color = T.textMid; }}
-        >
-          ← VOLVER
-        </button>
-        <Label style={{ marginBottom: 0 }}>CONFIGURACIÓN DEL SISTEMA</Label>
-      </div>
-
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, maxWidth: 960, width: "100%", margin: "0 auto", padding: "32px 28px" }}>
-        {/* Left */}
-        <div style={{ paddingRight: 28, borderRight: `1px solid ${T.border}` }}>
-          <Label>Identificación del pasajero</Label>
-          <TacticalInput value={localName} onChange={e => setLocalName(e.target.value)} placeholder="Tu nombre completo" />
-
-          <Divider />
-
-          <Label>Endpoint AWS SNS</Label>
-          <TacticalInput
-            value={localSns} onChange={e => setLocalSns(e.target.value)}
-            placeholder="https://xxx.execute-api.amazonaws.com/prod/alert"
-            style={{ fontSize: 11 }}
-          />
-          <p style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim, marginTop: 8, lineHeight: 1.8 }}>
-            Sin endpoint configurado, los SMS se ejecutan en modo simulado — el log muestra el mensaje pero no hay envío real.
-          </p>
-        </div>
-
-        {/* Right */}
-        <div style={{ paddingLeft: 28 }}>
-          <Label>Contactos de emergencia</Label>
-          {localContacts.map((c, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-              <TacticalInput value={c.name}  onChange={e => updateContact(i, "name",  e.target.value)} placeholder="Nombre" style={{ flex: "0 0 110px" }} />
-              <TacticalInput value={c.phone} onChange={e => updateContact(i, "phone", e.target.value)} placeholder="+591XXXXXXXXX" />
-              <button
-                onClick={() => updateContact(i, "active", !c.active)}
-                style={{ padding: "9px 12px", background: c.active ? T.greenLo : T.surface, border: `1px solid ${c.active ? T.green : T.border}`, borderRadius: 3, color: c.active ? T.green : T.textDim, fontFamily: T.mono, fontSize: 10, cursor: "pointer", letterSpacing: "0.1em", flexShrink: 0, transition: "all 0.2s" }}
-              >
-                {c.active ? "ON" : "OFF"}
-              </button>
-              <button
-                onClick={() => setLocalContacts(prev => prev.filter((_, j) => j !== i))}
-                style={{ padding: "9px 10px", background: T.accentLo, border: `1px solid ${T.accent}30`, borderRadius: 3, color: T.accent, fontFamily: T.mono, fontSize: 11, cursor: "pointer", flexShrink: 0 }}
-              >✕</button>
-            </div>
-          ))}
-
-          <button
-            onClick={() => setLocalContacts(prev => [...prev, { name: "", phone: "", active: true }])}
-            style={{ width: "100%", padding: 10, background: "none", border: `1px dashed ${T.border}`, borderRadius: 3, color: T.textDim, fontFamily: T.mono, fontSize: 11, cursor: "pointer", letterSpacing: "0.1em", marginBottom: 20, transition: "all 0.2s" }}
-            onMouseEnter={e => { e.target.style.borderColor = T.borderHi; e.target.style.color = T.text; }}
-            onMouseLeave={e => { e.target.style.borderColor = T.border;   e.target.style.color = T.textDim; }}
-          >+ AGREGAR CONTACTO</button>
-
-          <button
-            onClick={() => onSave(localContacts, localName, localSns)}
-            style={{ width: "100%", padding: 14, background: T.accentLo, border: `1px solid ${T.accent}60`, borderRadius: 3, color: T.accent, fontFamily: T.mono, fontSize: 12, cursor: "pointer", letterSpacing: "0.18em", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.target.style.background = `rgba(230,57,80,0.22)`; }}
-            onMouseLeave={e => { e.target.style.background = T.accentLo; }}
-          >GUARDAR Y VOLVER</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   MAIN COMPONENT
-───────────────────────────────────────────── */
 export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
-  // Inject fonts/keyframes once
-  useEffect(() => {
-    const id = "taxi-global-styles";
-    if (!document.getElementById(id)) {
-      const s = document.createElement("style");
-      s.id = id; s.textContent = GLOBAL_CSS;
-      document.head.appendChild(s);
-    }
-  }, []);
-
-  // Read URL params (bypass)
-  const params      = new URLSearchParams(window.location.search);
-  const nombreFinal = params.get("conductorNFC") || params.get("conductor") || conductorNFC || "Conductor no identificado";
-  const placaFinal  = params.get("placaNFC")     || params.get("placa")     || placaNFC     || "Placa desconocida";
-
-  const DRIVER = {
-    name:     nombreFinal,
-    plate:    placaFinal,
-    rating:   4.2,
-    trips:    1247,
-    verified: nombreFinal !== "Conductor no identificado",
+  // Si el NFC envía un nombre, lo usamos. Si no, usamos "Desconocido" por seguridad.
+  const DRIVER = { 
+    name: conductorNFC || "Conductor no identificado", 
+    plate: placaNFC || "Placa desconocida", 
+    rating: 4.2, 
+    trips: 1247, 
+    verified: conductorNFC ? true : false 
   };
-
-  /* ── State ── */
-  const [screen,         setScreen]         = useState("main");
-  const [isActive,       setIsActive]       = useState(false);
-  const [transcript,     setTranscript]     = useState([]);
+  const [screen, setScreen]               = useState("main");
+  const [isActive, setIsActive]           = useState(false);
+  const [transcript, setTranscript]       = useState([]);
   const [alertTriggered, setAlertTriggered] = useState(false);
-  const [alertDetails,   setAlertDetails]   = useState(null);
-  const [aiAnalysis,     setAiAnalysis]     = useState(null);
-  const [isAnalyzing,    setIsAnalyzing]    = useState(false);
-  const [tripTime,       setTripTime]       = useState(0);
-  const [detectedKw,     setDetectedKw]     = useState(null);
-  const [micLevel,       setMicLevel]       = useState(0);
-  const [snsLog,         setSnsLog]         = useState([]);
-  const [contacts,       setContacts]       = useState(DEFAULT_CONTACTS);
-  const [myName,         setMyName]         = useState("Pasajero");
-  const [snsEndpoint,    setSnsEndpoint]    = useState("");
+  const [alertDetails, setAlertDetails]   = useState(null);
+  const [aiAnalysis, setAiAnalysis]       = useState(null);
+  const [isAnalyzing, setIsAnalyzing]     = useState(false);
+  const [tripTime, setTripTime]           = useState(0);
+  const [detectedKw, setDetectedKw]       = useState(null);
+  const [micLevel, setMicLevel]           = useState(0);
+  const [snsLog, setSnsLog]               = useState([]);
+  const [contacts, setContacts]           = useState(DEFAULT_CONTACTS);
+  const [myName, setMyName]               = useState("Pasajero");
+  const [snsEndpoint, setSnsEndpoint]     = useState("");
+  const [editContacts, setEditContacts]   = useState(null);
 
-  /* ── Refs ── */
-  const recognitionRef  = useRef(null);
-  const timerRef        = useRef(null);
-  const audioCtxRef     = useRef(null);
-  const analyserRef     = useRef(null);
-  const micStreamRef    = useRef(null);
-  const animFrameRef    = useRef(null);
-  const transcriptRef   = useRef([]);
-  const alertedRef      = useRef(false);
-  const isListeningRef  = useRef(false);
-  const myNameRef       = useRef(myName);
-  const contactsRef     = useRef(contacts);
-  const snsEndpointRef  = useRef(snsEndpoint);
+  const recognitionRef = useRef(null);
+  const timerRef       = useRef(null);
+  const audioCtxRef    = useRef(null);
+  const analyserRef    = useRef(null);
+  const micStreamRef   = useRef(null);
+  const animFrameRef   = useRef(null);
+  const transcriptRef  = useRef([]);
+  const alertedRef     = useRef(false);
 
-  // Keep refs in sync with state (fixes stale-closure bugs)
-  useEffect(() => { myNameRef.current      = myName;      }, [myName]);
-  useEffect(() => { contactsRef.current    = contacts;    }, [contacts]);
-  useEffect(() => { snsEndpointRef.current = snsEndpoint; }, [snsEndpoint]);
 
-  /* ── Trip timer ── */
   useEffect(() => {
-    if (isActive) {
-      timerRef.current = setInterval(() => setTripTime(t => t + 1), 1000);
-    } else {
-      clearInterval(timerRef.current);
-    }
+    if (isActive) timerRef.current = setInterval(() => setTripTime(t => t+1), 1000);
+    else clearInterval(timerRef.current);
     return () => clearInterval(timerRef.current);
   }, [isActive]);
 
-  /* ── Mic level visualizer ── */
-  const startMicLevel = useCallback(async () => {
+  const fmt = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+  const startMicLevel = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
-      // Reuse existing AudioContext if possible to avoid "closed" state error
-      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-        audioCtxRef.current = new AudioContext();
-      }
-      if (audioCtxRef.current.state === "suspended") {
-        await audioCtxRef.current.resume();
-      }
-      analyserRef.current = audioCtxRef.current.createAnalyser();
+      audioCtxRef.current  = new AudioContext();
+      analyserRef.current  = audioCtxRef.current.createAnalyser();
       audioCtxRef.current.createMediaStreamSource(stream).connect(analyserRef.current);
       analyserRef.current.fftSize = 256;
       const data = new Uint8Array(analyserRef.current.frequencyBinCount);
       const tick = () => {
-        if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(data);
-        const avg = data.reduce((a, b) => a + b, 0) / data.length;
-        setMicLevel(Math.min(100, avg * 2.5));
+        setMicLevel(Math.min(100, (data.reduce((a,b)=>a+b,0)/data.length)*2.5));
         animFrameRef.current = requestAnimationFrame(tick);
       };
       tick();
-    } catch (e) {
-      console.warn("Micrófono no disponible:", e);
-    }
-  }, []);
+    } catch(e) { console.warn("Mic no disponible", e); }
+  };
 
-  const stopMicLevel = useCallback(() => {
+  const stopMicLevel = () => {
     cancelAnimationFrame(animFrameRef.current);
-    animFrameRef.current = null;
     micStreamRef.current?.getTracks().forEach(t => t.stop());
-    micStreamRef.current = null;
-    analyserRef.current  = null;
-    // Close AudioContext properly
-    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
+    audioCtxRef.current?.close().catch(()=>{});
     setMicLevel(0);
-  }, []);
+  };
 
-  /* ── Keyword check ── */
   const checkKeywords = useCallback(text => {
     const l = text.toLowerCase();
     for (const kw of DEFAULT_KEYWORDS) if (l.includes(kw)) return kw;
     return null;
   }, []);
 
-  /* ── Alert sender — uses refs to avoid stale closures ── */
-  const sendAlerts = useCallback(async (reason, location) => {
-    const active  = contactsRef.current.filter(c => c.active);
-    const message =
-`🚨 ALERTA DE SEGURIDAD
-👤 ${myNameRef.current} necesita ayuda
-📍 ${location}
-🚗 Taxi ${DRIVER.plate} | ${DRIVER.name}
-⏰ ${new Date().toLocaleTimeString()}
-📋 ${reason}
-[Agente Taxi Seguro]`;
-
-    for (const c of active) {
-      if (snsEndpointRef.current) {
-        try {
-          const r = await fetch(snsEndpointRef.current, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phone: c.phone, message }),
-          });
-          setSnsLog(p => [...p, { contact: c.name, ok: r.ok, time: new Date().toLocaleTimeString(), text: r.ok ? `SMS enviado a ${c.name}` : `Error con ${c.name}` }]);
-        } catch {
-          setSnsLog(p => [...p, { contact: c.name, ok: false, time: new Date().toLocaleTimeString(), text: `Sin conexión — ${c.name}` }]);
-        }
-      } else {
-        setSnsLog(p => [...p, { contact: c.name, ok: true, sim: true, time: new Date().toLocaleTimeString(), text: `[SIM] SMS a ${c.name} (${c.phone})`, message }]);
-      }
-    }
-  }, [DRIVER.plate, DRIVER.name]);
-
-  /* ── Trigger alert (idempotent) ── */
-  const triggerAlert = useCallback((reason, text) => {
-    if (alertedRef.current) return;
-    alertedRef.current = true;
-    setAlertTriggered(true);
-    const location = "Sucre, Bolivia (GPS activo)";
-    setAlertDetails({ reason, text, time: new Date().toLocaleTimeString(), location });
-    sendAlerts(reason, location);
-  }, [sendAlerts]);
-
-  /* ── AI analysis ── */
-  const analyzeWithAI = useCallback(async text => {
-    if (isAnalyzing) return; // prevent concurrent calls
+  const analyzeWithAI = async text => {
     setIsAnalyzing(true);
     try {
-      const res  = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 200,
-          system: `Eres un agente de seguridad para pasajeros de taxi. Analiza el texto transcrito y determina si hay señales de peligro, angustia o coerción. Responde SOLO con JSON sin markdown: {"riesgo":"alto|medio|bajo","razon":"texto corto max 60 chars","accion":"alerta|monitorear|normal"}`,
-          messages: [{ role: "user", content: `Audio en taxi: "${text}"` }],
-        }),
+          system: `Eres un agente de seguridad para pasajeros de taxi. Analiza el texto transcrito y determina si hay señales de peligro, angustia o coerción. Responde SOLO con JSON sin markdown: {"riesgo":"alto|medio|bajo","razon":"texto corto","accion":"alerta|monitorear|normal"}`,
+          messages: [{ role:"user", content:`Audio en taxi: "${text}"` }]
+        })
       });
       const data = await res.json();
       const raw  = data.content?.[0]?.text || "{}";
-      const obj  = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      const obj  = JSON.parse(raw.replace(/```json|```/g,"").trim());
       setAiAnalysis(obj);
       if (obj.accion === "alerta" && !alertedRef.current)
         triggerAlert("IA detectó riesgo: " + obj.razon, text);
-    } catch {
-      setAiAnalysis({ riesgo: "bajo", razon: "Sin conexión con IA", accion: "normal" });
-    }
+    } catch { setAiAnalysis({ riesgo:"bajo", razon:"Sin conexión con IA", accion:"normal" }); }
     setIsAnalyzing(false);
-  }, [isAnalyzing, triggerAlert]);
+  };
 
-  /* ── Speech recognition ── */
-  const startListening = useCallback(() => {
+  const sendAlerts = async (reason, location) => {
+    const active  = contacts.filter(c => c.active);
+    const message =
+`🚨 ALERTA DE SEGURIDAD
+👤 ${myName} necesita ayuda
+📍 ${location}
+🚗 Taxi ${DRIVER.plate} | ${DRIVER.name}
+⏰ ${new Date().toLocaleTimeString()}
+📋 ${reason}
+[Agente Seguridad]`;
+
+    for (const c of active) {
+      if (snsEndpoint) {
+        try {
+          const r = await fetch(snsEndpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ phone: c.phone, message }) });
+          setSnsLog(p => [...p, { contact:c.name, ok:r.ok, time:new Date().toLocaleTimeString(), text: r.ok?`SMS enviado a ${c.name}`:`Error con ${c.name}` }]);
+        } catch {
+          setSnsLog(p => [...p, { contact:c.name, ok:false, time:new Date().toLocaleTimeString(), text:`Sin conexión — ${c.name}` }]);
+        }
+      } else {
+        setSnsLog(p => [...p, { contact:c.name, ok:true, sim:true, time:new Date().toLocaleTimeString(), text:`[SIMULADO] SMS a ${c.name} (${c.phone})`, message }]);
+      }
+    }
+  };
+
+  const triggerAlert = (reason, text) => {
+    if (alertedRef.current) return;
+    alertedRef.current = true;
+    setAlertTriggered(true);
+    const location = "Cochabamba, Bolivia (GPS activo)";
+    setAlertDetails({ reason, text, time: new Date().toLocaleTimeString(), location });
+    sendAlerts(reason, location);
+  };
+
+  const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { alert("Usa Chrome para reconocimiento de voz."); return; }
-
-    const rec     = new SR();
-    rec.lang      = "es-ES";
-    rec.continuous      = true;
-    rec.interimResults  = true;
-
+    const rec = new SR();
+    rec.lang = "es-ES"; rec.continuous = true; rec.interimResults = true;
+    
     rec.onresult = e => {
       const latest = Array.from(e.results).map(r => r[0].transcript).join(" ");
-
-      if (latest.toLowerCase().includes("viaje terminado")) {
-        // Defer stop to avoid calling setState inside event handler
-        setTimeout(handleStop, 0);
-        return;
+      
+      // --- INTERRUPTOR DE VOZ PARA PRUEBAS ---
+      const comandoParada = "viaje terminado";
+      if (latest.toLowerCase().includes(comandoParada)) {
+        console.log("Comando de voz detectado. Apagando sensores...");
+        handleStop(); // Apaga la interfaz, el mic y corta la ejecución
+        return; 
       }
+      // ---------------------------------------
 
-      const entry   = { text: latest, time: new Date().toLocaleTimeString(), id: Date.now() };
+      const entry  = { text: latest, time: new Date().toLocaleTimeString(), id: Date.now() };
       const updated = [...transcriptRef.current.slice(-10), entry];
       transcriptRef.current = updated;
       setTranscript([...updated]);
-
+      
       const kw = checkKeywords(latest);
-      if (kw && !alertedRef.current) {
-        setDetectedKw(kw);
-        triggerAlert(`Keyword: "${kw}"`, latest);
-      }
-      if (updated.length % 3 === 0)
-        analyzeWithAI(updated.slice(-3).map(t => t.text).join(". "));
+      if (kw && !alertedRef.current) { setDetectedKw(kw); triggerAlert(`Keyword: "${kw}"`, latest); }
+      if (updated.length % 3 === 0) analyzeWithAI(updated.slice(-3).map(t=>t.text).join(". "));
     };
-
+    
     rec.onerror = () => {};
-    rec.onend   = () => { if (isListeningRef.current) { try { rec.start(); } catch {} } };
-
+    
+    // Mantenemos la llave maestra de seguridad que creamos antes
+    rec.onend = () => { 
+      if (isListeningRef.current) { 
+        try { rec.start(); } catch {} 
+      } 
+    };
+    
     recognitionRef.current = rec;
     rec.start();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkKeywords, triggerAlert, analyzeWithAI]);
+  };
 
-  /* ── Start / Stop ── */
-  const handleStart = useCallback(async () => {
-    alertedRef.current     = false;
-    isListeningRef.current = true;
-    setIsActive(true);
-    setAlertTriggered(false);
-    setAlertDetails(null);
-    setTranscript([]);
-    transcriptRef.current = [];
-    setSnsLog([]);
-    setDetectedKw(null);
-    setAiAnalysis(null);
-    setTripTime(0);
-
-    await startMicLevel();
+ const handleStart = async () => {
+    alertedRef.current = false;
+    setIsActive(true); setAlertTriggered(false); setAlertDetails(null);
+    setTranscript([]); transcriptRef.current = []; setSnsLog([]);
+    setDetectedKw(null); setAiAnalysis(null); setTripTime(0);
+    
+    // 1. Encendemos los sensores de audio de tu amigo
+    await startMicLevel(); 
     startListening();
 
+    // 2. INYECTAMOS TU CÓDIGO DE GPS AQUÍ
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
-        pos => console.log("GPS:", pos.coords.latitude, pos.coords.longitude),
-        err => console.warn("GPS error:", err.message)
+        (position) => {
+          console.log("GPS activado. Lat:", position.coords.latitude, "Lon:", position.coords.longitude);
+        },
+        (error) => {
+          console.error("Error de GPS:", error.message);
+        }
       );
+    } else {
+      console.warn("Este navegador no soporta GPS.");
     }
-  }, [startMicLevel, startListening]);
+  };
 
-  const handleStop = useCallback(() => {
-    isListeningRef.current = false;
+  const handleStop = () => {
     setIsActive(false);
     try { recognitionRef.current?.stop(); } catch {}
-    recognitionRef.current = null;
     stopMicLevel();
-  }, [stopMicLevel]);
+  };
 
-  /* ── Config save ── */
-  const handleConfigSave = useCallback((newContacts, newName, newSns) => {
-    setContacts(newContacts);
-    setMyName(newName);
-    setSnsEndpoint(newSns);
-    setScreen("main");
-  }, []);
-
-  /* ══════════════════════════════════════════
-     CONFIG SCREEN
-  ══════════════════════════════════════════ */
+  /* ══════════ CONFIG SCREEN ══════════ */
   if (screen === "config") {
+    const ec = editContacts || contacts;
     return (
-      <ConfigScreen
-        contacts={contacts}
-        myName={myName}
-        snsEndpoint={snsEndpoint}
-        onSave={handleConfigSave}
-        onBack={() => setScreen("main")}
-      />
+      <div style={{ minHeight:"100vh", background:"#0a0a0f", color:"#e0e0e0", fontFamily:"'Courier New',monospace", display:"flex", flexDirection:"column" }}>
+        {/* header */}
+        <div style={{ padding:"16px 32px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", gap:16 }}>
+          <button onClick={() => { setScreen("main"); setEditContacts(null); }} style={{ background:"none", border:"1px solid #2a2a3e", borderRadius:8, color:"#7b7bff", fontSize:13, padding:"6px 14px", cursor:"pointer", fontFamily:"'Courier New',monospace" }}>← Volver</button>
+          <span style={{ fontSize:12, letterSpacing:3, color:"#888" }}>CONFIGURACIÓN</span>
+        </div>
+
+        <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:24, padding:32, maxWidth:900, width:"100%" }}>
+          {/* left col */}
+          <div>
+            <SL>TU NOMBRE</SL>
+            <CFInput value={myName} onChange={e=>setMyName(e.target.value)} placeholder="Tu nombre" />
+
+            <SL style={{ marginTop:24 }}>ENDPOINT AWS SNS</SL>
+            <CFInput value={snsEndpoint} onChange={e=>setSnsEndpoint(e.target.value)} placeholder="https://xxx.execute-api.amazonaws.com/prod/alert" small />
+            <div style={{ fontSize:11, color:"#555", marginTop:6, lineHeight:1.7 }}>
+              Sin endpoint los SMS se simulan — el mensaje se muestra en el log pero no se envía realmente.
+            </div>
+          </div>
+
+          {/* right col — contacts */}
+          <div>
+            <SL>CONTACTOS DE EMERGENCIA</SL>
+            {ec.map((c,i) => (
+              <div key={i} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10 }}>
+                <input value={c.name} onChange={e=>{ const u=[...ec]; u[i]={...c,name:e.target.value}; setEditContacts(u); }}
+                  placeholder="Nombre" style={cfInput()} />
+                <input value={c.phone} onChange={e=>{ const u=[...ec]; u[i]={...c,phone:e.target.value}; setEditContacts(u); }}
+                  placeholder="+591XXXXXXXXX" style={cfInput()} />
+                <button onClick={()=>{ const u=[...ec]; u[i]={...c,active:!c.active}; setEditContacts(u); }}
+                  style={{ padding:"8px 12px", background:c.active?"rgba(48,209,88,0.15)":"rgba(255,255,255,0.05)", border:`1px solid ${c.active?"#30d158":"#2a2a3e"}`, borderRadius:8, color:c.active?"#30d158":"#666", fontSize:11, cursor:"pointer", fontFamily:"'Courier New',monospace" }}>
+                  {c.active?"ON":"OFF"}
+                </button>
+                <button onClick={()=>setEditContacts(ec.filter((_,j)=>j!==i))}
+                  style={{ padding:"8px 10px", background:"rgba(255,45,85,0.1)", border:"1px solid #ff2d5530", borderRadius:8, color:"#ff2d55", fontSize:11, cursor:"pointer" }}>✕</button>
+              </div>
+            ))}
+            <button onClick={()=>setEditContacts([...ec,{name:"",phone:"",active:true}])}
+              style={{ width:"100%", padding:"10px", background:"rgba(123,123,255,0.08)", border:"1px dashed #3a3a9e", borderRadius:8, color:"#7b7bff", fontSize:12, cursor:"pointer", fontFamily:"'Courier New',monospace", marginBottom:20 }}>
+              + Agregar contacto
+            </button>
+            <button onClick={()=>{ setContacts(ec||contacts); setScreen("main"); setEditContacts(null); }}
+              style={{ width:"100%", padding:14, background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", border:"1px solid #3a3a9e", borderRadius:12, color:"#7b7bff", fontSize:13, cursor:"pointer", fontFamily:"'Courier New',monospace", letterSpacing:2 }}>
+              GUARDAR Y VOLVER
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 
-  /* ══════════════════════════════════════════
-     MAIN DASHBOARD
-  ══════════════════════════════════════════ */
-  const riskColor = aiAnalysis ? RISK_COLOR[aiAnalysis.riesgo] : null;
-
+  /* ══════════ MAIN DASHBOARD ══════════ */
   return (
-    <div style={{
-      width: "100vw", height: "100vh",
-      background: T.bg, fontFamily: T.font, color: T.text,
-      display: "flex", flexDirection: "column", overflow: "hidden",
-    }}>
+    <div style={{ width:"100vw", minHeight:"100vh", background:"#0a0a0f", fontFamily:"'Courier New',monospace", color:"#e0e0e0", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
-      {/* ══ TOP BAR ══ */}
-      <div style={{
-        flexShrink: 0,
-        background: alertTriggered ? "rgba(230,57,80,0.06)" : T.surface,
-        borderBottom: `1px solid ${alertTriggered ? T.accent : T.border}`,
-        padding: "0 28px",
-        height: 52,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        transition: "all 0.4s",
-      }}>
-        {/* Left */}
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {/* Status dot */}
-          <div style={{
-            width: 9, height: 9, borderRadius: "50%",
-            background: isActive ? (alertTriggered ? T.accent : T.green) : "#2a2d35",
-            boxShadow: isActive ? `0 0 0 0 ${alertTriggered ? T.accent : T.green}` : "none",
-            animation: isActive ? (alertTriggered ? "sos-pulse 1.2s infinite" : "none") : "none",
-            transition: "background 0.4s",
-          }} />
-          <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.2em", color: T.textDim }}>
-            TAXI·SEGURO / AGENTE·v2
-          </span>
-          {isActive && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.green, marginLeft: 4 }}>
-              {fmt(tripTime)}
-            </span>
-          )}
+      {/* ── TOP BAR ── */}
+      <div style={{ background:alertTriggered?"rgba(255,45,85,0.12)":"rgba(255,255,255,0.02)", borderBottom:`2px solid ${alertTriggered?"#ff2d55":"#1a1a2e"}`, padding:"14px 32px", display:"flex", alignItems:"center", justifyContent:"space-between", transition:"all 0.5s", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:10, height:10, borderRadius:"50%", background:isActive?(alertTriggered?"#ff2d55":"#30d158"):"#333", boxShadow:isActive?`0 0 14px ${alertTriggered?"#ff2d55":"#30d158"}`:"none", animation:isActive?"pulse 1.5s infinite":"none" }} />
+          <span style={{ fontSize:13, letterSpacing:4, color:"#777" }}>AGENTE DE SEGURIDAD</span>
+          {isActive && <span style={{ fontSize:12, color:"#30d158", marginLeft:8 }}>⏱ {fmt(tripTime)}</span>}
         </div>
-        {/* Right */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {alertTriggered && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, animation: "status-blink 0.9s infinite", letterSpacing: "0.1em" }}>
-              ● ALERTA ACTIVA
-            </span>
-          )}
-          <button
-            onClick={() => setScreen("config")}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, fontFamily: T.mono, fontSize: 10, padding: "6px 14px", cursor: "pointer", letterSpacing: "0.12em", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.target.style.borderColor = T.borderHi; e.target.style.color = T.text; }}
-            onMouseLeave={e => { e.target.style.borderColor = T.border;   e.target.style.color = T.textDim; }}
-          >
-            ⚙ CONFIG
-          </button>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          {alertTriggered && <span style={{ fontSize:12, color:"#ff2d55", animation:"blink 1s infinite" }}>🚨 ALERTA ACTIVA</span>}
+          <button onClick={()=>{ setEditContacts(null); setScreen("config"); }} style={{ background:"none", border:"1px solid #2a2a3e", borderRadius:8, color:"#666", fontSize:11, padding:"6px 14px", cursor:"pointer", fontFamily:"'Courier New',monospace", letterSpacing:1 }}>⚙ CONFIGURACIÓN</button>
         </div>
       </div>
 
-      {/* ══ ALERT BANNER ══ */}
+      {/* ── ALERT BANNER ── */}
       {alertTriggered && alertDetails && (
-        <div style={{
-          flexShrink: 0,
-          background: "rgba(230,57,80,0.08)",
-          borderBottom: `1px solid rgba(230,57,80,0.25)`,
-          padding: "10px 28px",
-          display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap",
-          animation: "slide-in 0.3s ease",
-        }}>
+        <div style={{ background:"rgba(255,45,85,0.1)", borderBottom:"1px solid #ff2d5550", padding:"12px 32px", display:"flex", alignItems:"center", gap:24, animation:"flashIn .3s ease" }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: T.accent, letterSpacing: "0.05em" }}>
-              🚨 {alertDetails.reason}
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim, marginTop: 3 }}>
-              {alertDetails.location} · {alertDetails.time}
-            </div>
+            <div style={{ color:"#ff2d55", fontSize:14, fontWeight:"bold" }}>🚨 {alertDetails.reason}</div>
+            <div style={{ fontSize:11, color:"#888", marginTop:2 }}>📍 {alertDetails.location} · {alertDetails.time}</div>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {snsLog.map((l, i) => (
-              <Pill key={i} color={l.ok ? T.green : T.accent}>
-                {l.ok ? "✓" : "✗"} {l.contact}{l.sim ? " sim" : ""}
-              </Pill>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {snsLog.map((l,i) => (
+              <div key={i} style={{ background:l.ok?"rgba(48,209,88,0.1)":"rgba(255,45,85,0.1)", border:`1px solid ${l.ok?"#30d158":"#ff2d55"}`, borderRadius:20, padding:"4px 12px", fontSize:11, color:l.ok?"#30d158":"#ff2d55" }}>
+                {l.ok?`✓ ${l.contact}`:`✗ ${l.contact}`}{l.sim?" (sim)":""}
+              </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* ══ BODY GRID ══ */}
-      <div style={{
-        flex: 1,
-        display: "grid",
-        gridTemplateColumns: "clamp(240px, 22%, 300px) 1fr clamp(220px, 20%, 280px)",
-        overflow: "hidden",
-        minWidth: 0,
-      }}>
+      {/* ── MAIN GRID ── */}
+      <div style={{ flex:1, display:"grid", gridTemplateColumns:"300px 1fr 280px", gridTemplateRows:"auto 1fr", gap:0, overflow:"hidden" }}>
 
         {/* ── COL 1: Driver + Contacts ── */}
-        <div style={{ borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-          {/* Driver */}
-          <div style={{ padding: "20px 20px 16px", borderBottom: `1px solid ${T.border}` }}>
-            <Label>Conductor</Label>
-            <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
-              <div style={{
-                width: 48, height: 48, borderRadius: 3, flexShrink: 0,
-                background: "linear-gradient(135deg, #131626, #1e2240)",
-                border: `1px solid ${T.borderHi}`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.blue,
-              }}>
-                {getInitials(DRIVER.name)}
-              </div>
+        <div style={{ borderRight:"1px solid #1a1a2e", display:"flex", flexDirection:"column", overflowY:"auto" }}>
+          {/* Driver card */}
+          <div style={{ padding:20, borderBottom:"1px solid #1a1a2e" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>CONDUCTOR</div>
+            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:16 }}>
+              <div style={{ width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:"bold", color:"#7b7bff", border:"2px solid #3a3a9e", flexShrink:0 }}>CM</div>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "0.03em" }}>{DRIVER.name}</div>
-                <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim, marginTop: 3 }}>{DRIVER.plate}</div>
-                <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim }}>{DRIVER.trips.toLocaleString()} viajes</div>
+                <div style={{ fontSize:15, fontWeight:"bold", color:"#e0e0e0" }}>{DRIVER.name}</div>
+                <div style={{ fontSize:11, color:"#888", marginTop:2 }}>Placa: {DRIVER.plate}</div>
+                <div style={{ fontSize:11, color:"#888" }}>{DRIVER.trips} viajes completados</div>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1, background: "rgba(245,166,35,0.07)", border: "1px solid rgba(245,166,35,0.2)", borderRadius: 3, padding: "8px 10px", textAlign: "center" }}>
-                <div style={{ fontSize: 16, fontWeight: 600, color: T.amber }}>★ {DRIVER.rating}</div>
-                <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, marginTop: 2 }}>RATING</div>
+            <div style={{ display:"flex", gap:10 }}>
+              <div style={{ flex:1, background:"rgba(255,214,10,0.08)", border:"1px solid #ffd60a30", borderRadius:8, padding:"10px", textAlign:"center" }}>
+                <div style={{ fontSize:18, color:"#ffd60a" }}>★ {DRIVER.rating}</div>
+                <div style={{ fontSize:10, color:"#666", marginTop:2 }}>Calificación</div>
               </div>
               {DRIVER.verified && (
-                <div style={{ flex: 1, background: T.greenLo, border: `1px solid ${T.green}30`, borderRadius: 3, padding: "8px 10px", textAlign: "center" }}>
-                  <div style={{ fontSize: 16, color: T.green }}>✓</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, marginTop: 2 }}>NFC·VER</div>
+                <div style={{ flex:1, background:"rgba(48,209,88,0.08)", border:"1px solid #30d15830", borderRadius:8, padding:"10px", textAlign:"center" }}>
+                  <div style={{ fontSize:16, color:"#30d158" }}>✓</div>
+                  <div style={{ fontSize:10, color:"#666", marginTop:2 }}>Verificado</div>
                 </div>
               )}
             </div>
           </div>
 
           {/* Contacts */}
-          <div style={{ padding: "16px 20px", flex: 1 }}>
-            <Label>Contactos de emergencia</Label>
-            {contacts.map((c, i) => (
-              <div key={i} style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 12px", marginBottom: 8,
-                background: T.surface, borderRadius: 3,
-                border: `1px solid ${c.active ? T.borderHi : T.border}`,
-                opacity: c.active ? 1 : 0.45, transition: "opacity 0.3s",
-              }}>
-                <div style={{ width: 28, height: 28, borderRadius: 3, background: T.panel, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>👤</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim }}>{c.phone}</div>
+          <div style={{ padding:20, flex:1 }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>CONTACTOS DE EMERGENCIA</div>
+            {contacts.map((c,i) => (
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", background:"rgba(255,255,255,0.03)", borderRadius:8, marginBottom:8, border:"1px solid #1e1e2e", opacity:c.active?1:0.4 }}>
+                <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(123,123,255,0.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, border:"1px solid #3a3a9e", flexShrink:0 }}>👤</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, color:"#e0e0e0" }}>{c.name}</div>
+                  <div style={{ fontSize:10, color:"#666" }}>{c.phone}</div>
                 </div>
-                <Pill color={c.active ? T.green : T.textDim}>{c.active ? "ON" : "OFF"}</Pill>
+                <div style={{ fontSize:9, padding:"2px 7px", borderRadius:10, background:c.active?"rgba(48,209,88,0.1)":"rgba(255,255,255,0.05)", color:c.active?"#30d158":"#555", border:`1px solid ${c.active?"#30d15840":"#2a2a3e"}` }}>
+                  {c.active?"ON":"OFF"}
+                </div>
               </div>
             ))}
-            <button
-              onClick={() => setScreen("config")}
-              style={{ width: "100%", padding: "8px", background: "none", border: `1px dashed ${T.border}`, borderRadius: 3, color: T.textDim, fontFamily: T.mono, fontSize: 10, cursor: "pointer", letterSpacing: "0.12em", transition: "all 0.2s", marginTop: 4 }}
-              onMouseEnter={e => { e.target.style.borderColor = T.borderHi; e.target.style.color = T.text; }}
-              onMouseLeave={e => { e.target.style.borderColor = T.border;   e.target.style.color = T.textDim; }}
-            >✎ EDITAR CONTACTOS</button>
+            <button onClick={()=>setScreen("config")} style={{ width:"100%", padding:"8px", background:"rgba(123,123,255,0.06)", border:"1px dashed #2a2a4e", borderRadius:8, color:"#7b7bff", fontSize:11, cursor:"pointer", fontFamily:"'Courier New',monospace", marginTop:4 }}>
+              ✎ Editar contactos
+            </button>
           </div>
         </div>
 
-        {/* ── COL 2: Transcript + AI + Controls ── */}
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* AI bar */}
-          <div style={{
-            flexShrink: 0,
-            padding: "12px 24px",
-            borderBottom: `1px solid ${T.border}`,
-            display: "flex", alignItems: "center", gap: 14,
-            background: aiAnalysis ? `${RISK_BG[aiAnalysis.riesgo]}` : T.surface,
-            transition: "background 0.5s",
-            minHeight: 48,
-          }}>
-            <Label style={{ marginBottom: 0, flexShrink: 0 }}>Análisis IA</Label>
-            {isAnalyzing ? (
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.blue, animation: "status-blink 0.8s infinite" }}>⟳ PROCESANDO</span>
-            ) : aiAnalysis ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <Pill color={riskColor} bg={RISK_BG[aiAnalysis.riesgo]}>
-                  ● RIESGO {aiAnalysis.riesgo?.toUpperCase()}
-                </Pill>
-                <span style={{ fontSize: 13, color: T.textMid }}>{aiAnalysis.razon}</span>
-              </div>
-            ) : (
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textDim }}>
-                {isActive ? "Esperando audio..." : "Inicia el monitoreo para activar el agente IA"}
-              </span>
-            )}
+        {/* ── COL 2: Transcript + AI ── */}
+        <div style={{ display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          {/* AI Analysis bar */}
+          <div style={{ padding:"16px 24px", borderBottom:"1px solid #1a1a2e", display:"flex", alignItems:"center", gap:20, background:"rgba(123,123,255,0.03)" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, flexShrink:0 }}>ANÁLISIS IA</div>
+            {isAnalyzing
+              ? <div style={{ fontSize:12, color:"#7b7bff" }}>⟳ Analizando...</div>
+              : aiAnalysis
+                ? <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                    <div style={{ padding:"4px 14px", borderRadius:20, fontSize:11, background:`${RC[aiAnalysis.riesgo]}15`, color:RC[aiAnalysis.riesgo], border:`1px solid ${RC[aiAnalysis.riesgo]}40` }}>
+                      Riesgo {aiAnalysis.riesgo?.toUpperCase()}
+                    </div>
+                    <span style={{ fontSize:12, color:"#aaa" }}>{aiAnalysis.razon}</span>
+                  </div>
+                : <div style={{ fontSize:12, color:"#444" }}>{isActive?"Esperando audio para analizar...":"Inicia el monitoreo para activar el agente IA"}</div>
+            }
           </div>
 
-          {/* Transcript area */}
-          <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
-            <Label>Transcripción en vivo</Label>
-            {transcript.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "50px 20px", color: T.borderHi }}>
-                <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.4 }}>🎙</div>
-                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textDim }}>
-                  {isActive ? "Habla cerca del micrófono..." : "Presiona INICIAR para activar el monitoreo"}
+          {/* Transcript */}
+          <div style={{ flex:1, padding:"20px 24px", overflowY:"auto" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:16 }}>TRANSCRIPCIÓN EN VIVO</div>
+            {transcript.length === 0
+              ? <div style={{ textAlign:"center", padding:"60px 20px", color:"#2a2a3e" }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>🎙</div>
+                  <div style={{ fontSize:13, color:"#444" }}>{isActive?"Habla cerca del micrófono...":"Presiona INICIAR MONITOREO para activar"}</div>
                 </div>
-              </div>
-            ) : (
-              transcript.map((t, i) => (
-                <div
-                  key={t.id}
-                  style={{
-                    padding: "10px 14px", marginBottom: 8,
-                    background: i === transcript.length - 1 ? "rgba(77,157,224,0.05)" : T.surface,
-                    borderRadius: 3,
-                    borderLeft: `2px solid ${i === transcript.length - 1 ? T.blue : T.border}`,
-                    opacity: 0.4 + (i / Math.max(transcript.length - 1, 1)) * 0.6,
-                    animation: i === transcript.length - 1 ? "fade-in 0.3s ease" : "none",
-                    transition: "opacity 0.3s",
-                  }}
-                >
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, marginBottom: 5 }}>{t.time}</div>
-                  <div style={{ fontSize: 14, lineHeight: 1.5, color: T.text }}>{t.text}</div>
-                </div>
-              ))
-            )}
+              : transcript.map((t,i) => (
+                  <div key={t.id} style={{ padding:"10px 14px", marginBottom:8, background:"rgba(255,255,255,0.02)", borderRadius:8, borderLeft:`3px solid ${i===transcript.length-1?"#7b7bff":"#1e1e2e"}`, opacity:0.4+(i/transcript.length)*0.6, transition:"opacity 0.3s" }}>
+                    <div style={{ fontSize:10, color:"#555", marginBottom:4 }}>{t.time}</div>
+                    <div style={{ fontSize:13, color:"#ccc", lineHeight:1.5 }}>{t.text}</div>
+                  </div>
+                ))
+            }
           </div>
 
-          {/* Controls */}
-          <div style={{ flexShrink: 0, padding: "14px 24px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 10 }}>
-            {!isActive ? (
-              <button
-                onClick={handleStart}
-                style={{
-                  flex: 1, padding: 14,
-                  background: T.greenLo, border: `1px solid ${T.green}50`,
-                  borderRadius: 3, color: T.green,
-                  fontFamily: T.mono, fontSize: 12, letterSpacing: "0.18em",
-                  cursor: "pointer", fontWeight: "bold", transition: "all 0.2s",
-                }}
-                onMouseEnter={e => { e.target.style.background = "rgba(39,201,122,0.18)"; }}
-                onMouseLeave={e => { e.target.style.background = T.greenLo; }}
-              >
-                ▶ INICIAR MONITOREO DE VIAJE
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={handleStop}
-                  style={{ flex: 1, padding: 13, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 3, color: T.textMid, fontFamily: T.mono, fontSize: 11, cursor: "pointer", letterSpacing: "0.12em", transition: "all 0.2s" }}
-                  onMouseEnter={e => { e.target.style.borderColor = T.borderHi; e.target.style.color = T.text; }}
-                  onMouseLeave={e => { e.target.style.borderColor = T.border;   e.target.style.color = T.textMid; }}
-                >■ TERMINAR VIAJE</button>
-                {!alertTriggered && (
-                  <button
-                    onClick={() => triggerAlert("SOS Manual activado", "")}
-                    style={{
-                      padding: "13px 28px",
-                      background: T.accentLo, border: `2px solid ${T.accent}`,
-                      borderRadius: 3, color: T.accent,
-                      fontFamily: T.mono, fontSize: 14, cursor: "pointer",
-                      fontWeight: "bold", letterSpacing: "0.12em",
-                      animation: "sos-pulse 2s infinite",
-                      transition: "background 0.2s",
-                    }}
-                    onMouseEnter={e => { e.target.style.background = "rgba(230,57,80,0.25)"; }}
-                    onMouseLeave={e => { e.target.style.background = T.accentLo; }}
-                  >🚨 SOS</button>
-                )}
-              </>
-            )}
+          {/* Bottom controls */}
+          <div style={{ padding:"16px 24px", borderTop:"1px solid #1a1a2e", display:"flex", gap:12 }}>
+            {!isActive
+              ? <button onClick={handleStart} style={{ flex:1, padding:"14px", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", border:"1px solid #3a3a9e", borderRadius:12, color:"#7b7bff", fontSize:13, letterSpacing:3, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>
+                  🎙 INICIAR MONITOREO DE VIAJE
+                </button>
+              : <>
+                  <button onClick={handleStop} style={{ flex:1, padding:"13px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5540", borderRadius:12, color:"#ff2d55", fontSize:12, cursor:"pointer", fontFamily:"'Courier New',monospace" }}>■ TERMINAR VIAJE</button>
+                  {!alertTriggered && (
+                    <button onClick={()=>triggerAlert("SOS Manual activado","")} style={{ padding:"13px 28px", background:"rgba(255,45,85,0.2)", border:"2px solid #ff2d55", borderRadius:12, color:"#ff2d55", fontSize:14, cursor:"pointer", fontFamily:"'Courier New',monospace", fontWeight:"bold" }}>🚨 SOS</button>
+                  )}
+                </>
+            }
           </div>
         </div>
 
-        {/* ── COL 3: Mic + Keywords + SMS Log ── */}
-        <div style={{ borderLeft: `1px solid ${T.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* ── COL 3: Mic + SMS Log ── */}
+        <div style={{ borderLeft:"1px solid #1a1a2e", display:"flex", flexDirection:"column", overflow:"hidden" }}>
           {/* Mic visualizer */}
-          <div style={{ flexShrink: 0, padding: "16px 18px", borderBottom: `1px solid ${T.border}` }}>
-            <Label>Nivel de audio</Label>
-            <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 44, marginBottom: 10 }}>
-              {Array.from({ length: 24 }).map((_, i) => {
-                const active = (micLevel / 100) * 24 > i;
-                const clr    = micLevel > 70 ? T.accent : micLevel > 40 ? T.amber : T.green;
-                const h      = 20 + Math.sin(i * 0.9 + Date.now() * 0.001) * 12;
-                return (
-                  <div key={i} style={{
-                    flex: 1, minHeight: 3, borderRadius: 2,
-                    background: active ? clr : T.border,
-                    height: `${active ? Math.max(20, h) : 15}%`,
-                    transition: "background 0.08s, height 0.12s",
-                    boxShadow: active ? `0 0 4px ${clr}50` : "none",
-                  }} />
-                );
-              })}
+          <div style={{ padding:20, borderBottom:"1px solid #1a1a2e" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>NIVEL DE AUDIO</div>
+            <div style={{ display:"flex", gap:3, alignItems:"flex-end", height:50, marginBottom:10 }}>
+              {Array.from({length:20}).map((_,i) => (
+                <div key={i} style={{ flex:1, background: (micLevel/100)*20 > i ? (micLevel>70?"#ff2d55":micLevel>40?"#ff9500":"#30d158") : "#1a1a2e", borderRadius:2, height:`${20+Math.sin(i*0.8)*15}%`, transition:"background 0.1s", minHeight:4 }} />
+              ))}
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: isActive ? T.green : T.textDim, textAlign: "center", letterSpacing: "0.1em" }}>
-              {isActive ? (micLevel < 5 ? "SILENCIO" : "● ESCUCHANDO") : "INACTIVO"}
+            <div style={{ fontSize:10, color:isActive?"#30d158":"#555", textAlign:"center" }}>
+              {isActive?(micLevel<5?"Silencio...":"● Escuchando"):"Inactivo"}
             </div>
             {detectedKw && (
-              <div style={{ marginTop: 10, padding: "7px 10px", background: T.accentLo, border: `1px solid ${T.accent}35`, borderRadius: 3, fontFamily: T.mono, fontSize: 10, color: T.accent, textAlign: "center", animation: "slide-in 0.3s ease" }}>
+              <div style={{ marginTop:10, padding:"8px 10px", background:"rgba(255,45,85,0.08)", border:"1px solid #ff2d5530", borderRadius:8, fontSize:11, color:"#ff2d55", textAlign:"center" }}>
                 ⚡ "{detectedKw}" detectada
               </div>
             )}
           </div>
 
           {/* Keywords */}
-          <div style={{ flexShrink: 0, padding: "14px 18px", borderBottom: `1px solid ${T.border}` }}>
-            <Label>Keywords activas</Label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          <div style={{ padding:"16px 20px", borderBottom:"1px solid #1a1a2e" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:12 }}>KEYWORDS ACTIVAS</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
               {DEFAULT_KEYWORDS.map(kw => (
-                <div
-                  key={kw}
-                  style={{
-                    padding: "3px 9px", borderRadius: 3,
-                    background: detectedKw === kw ? T.accentLo : T.surface,
-                    border: `1px solid ${detectedKw === kw ? T.accent : T.border}`,
-                    color: detectedKw === kw ? T.accent : T.textDim,
-                    fontFamily: T.mono, fontSize: 9, letterSpacing: "0.05em",
-                    transition: "all 0.2s",
-                  }}
-                >{kw}</div>
+                <div key={kw} style={{ padding:"4px 10px", borderRadius:12, background:detectedKw===kw?"rgba(255,45,85,0.15)":"rgba(255,255,255,0.04)", border:`1px solid ${detectedKw===kw?"#ff2d55":"#1e1e2e"}`, color:detectedKw===kw?"#ff2d55":"#666", fontSize:10 }}>{kw}</div>
               ))}
             </div>
           </div>
 
           {/* SMS Log */}
-          <div style={{ flex: 1, padding: "14px 18px", overflowY: "auto" }}>
-            <Label>SMS Log</Label>
-            {snsLog.length === 0 ? (
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: T.borderHi, textAlign: "center", paddingTop: 16 }}>SIN ACTIVIDAD</div>
-            ) : (
-              snsLog.map((l, i) => (
-                <div
-                  key={i}
-                  style={{
-                    padding: "9px 11px", marginBottom: 8,
-                    background: l.ok ? T.greenLo : T.accentLo,
-                    border: `1px solid ${l.ok ? T.green : T.accent}30`,
-                    borderRadius: 3, animation: "fade-in 0.3s ease",
-                  }}
-                >
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: l.ok ? T.green : T.accent }}>
-                    {l.text}
+          <div style={{ flex:1, padding:"16px 20px", overflowY:"auto" }}>
+            <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:12 }}>SMS LOG</div>
+            {snsLog.length===0
+              ? <div style={{ fontSize:11, color:"#2a2a3e", textAlign:"center", paddingTop:20 }}>Sin actividad aún</div>
+              : snsLog.map((l,i) => (
+                  <div key={i} style={{ padding:"9px 11px", background:l.ok?"rgba(48,209,88,0.05)":"rgba(255,45,85,0.05)", border:`1px solid ${l.ok?"#30d15830":"#ff2d5530"}`, borderRadius:8, marginBottom:8 }}>
+                    <div style={{ fontSize:11, color:l.ok?"#30d158":"#ff2d55" }}>{l.text}</div>
+                    {l.sim && <div style={{ fontSize:9, color:"#555", marginTop:3 }}>modo simulado</div>}
+                    <div style={{ fontSize:9, color:"#444", marginTop:2 }}>{l.time}</div>
                   </div>
-                  {l.sim && <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, marginTop: 3 }}>modo simulado</div>}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, marginTop: 2 }}>{l.time}</div>
-                </div>
-              ))
-            )}
+                ))
+            }
           </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.4)}}
+        @keyframes flashIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+        *{box-sizing:border-box;margin:0;padding:0}
+        html,body,#root{width:100%;height:100%;overflow:hidden}
+        ::-webkit-scrollbar{width:4px}
+        ::-webkit-scrollbar-thumb{background:#2a2a3e;border-radius:2px}
+        input::placeholder{color:#333}
+        input:focus{outline:none;border-color:#3a3a9e !important}
+      `}</style>
     </div>
   );
 }
+
+const SL = ({children,style}) => <div style={{ fontSize:10,color:"#555",letterSpacing:3,marginBottom:10,textTransform:"uppercase",...style }}>{children}</div>;
+const CFInput = ({value,onChange,placeholder,small}) => (
+  <input value={value} onChange={onChange} placeholder={placeholder}
+    style={{ width:"100%",padding:"10px 12px",background:"rgba(255,255,255,0.05)",border:"1px solid #2a2a3e",borderRadius:8,color:"#e0e0e0",fontSize:small?11:13,fontFamily:"'Courier New',monospace",marginBottom:4 }} />
+);
+const cfInput = () => ({ flex:1,padding:"8px 10px",background:"rgba(255,255,255,0.05)",border:"1px solid #2a2a3e",borderRadius:8,color:"#e0e0e0",fontSize:11,fontFamily:"'Courier New',monospace" });
