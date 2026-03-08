@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-/* ─────────────────────────────────────────────
-   CONSTANTS
-───────────────────────────────────────────── */
+
 const DEFAULT_KEYWORDS = [
   "auxilio","ayuda","socorro","peligro","suéltame","sueltame",
   "no me toques","help","para","déjame","dejame","llamen","policia","policía"
