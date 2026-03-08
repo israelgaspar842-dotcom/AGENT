@@ -8,18 +8,34 @@ const DEFAULT_CONTACTS = [
   { name: "Amigo/a", phone: "+591 7XX-XXXX", active: false },
 ];
 
-
 const RC = { alto:"#ff2d55", medio:"#ff9500", bajo:"#30d158" };
 
 export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
-  // Si el NFC envía un nombre, lo usamos. Si no, usamos "Desconocido" por seguridad.
+  // LECTURA DIRECTA DE LA URL (Evitamos depender de App.jsx)
+  const params = new URLSearchParams(window.location.search);
+  const nombreUrl = params.get("conductorNFC") || params.get("conductor");
+  const placaUrl = params.get("placaNFC") || params.get("placa");
+
+  const nombreFinal = nombreUrl || conductorNFC || "Conductor no identificado";
+  const placaFinal = placaUrl || placaNFC || "Placa desconocida";
+
   const DRIVER = { 
-    name: conductorNFC || "Conductor no identificado", 
-    plate: placaNFC || "Placa desconocida", 
+    name: nombreFinal, 
+    plate: placaFinal, 
     rating: 4.2, 
     trips: 1247, 
-    verified: conductorNFC ? true : false 
+    verified: nombreFinal !== "Conductor no identificado" 
   };
+
+  // EXTRACTOR DINÁMICO DE INICIALES (Reemplaza al "CM")
+  const getInitials = (name) => {
+    if (name === "Conductor no identificado") return "?";
+    const words = name.trim().split(" ");
+    if (words.length > 1) return (words[0][0] + words[1][0]).toUpperCase();
+    return name.substring(0, 2).toUpperCase();
+  };
+  const driverInitials = getInitials(DRIVER.name);
+
   const [screen, setScreen]               = useState("main");
   const [isActive, setIsActive]           = useState(false);
   const [transcript, setTranscript]       = useState([]);
@@ -44,7 +60,7 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
   const animFrameRef   = useRef(null);
   const transcriptRef  = useRef([]);
   const alertedRef     = useRef(false);
-
+  const isListeningRef = useRef(false);
 
   useEffect(() => {
     if (isActive) timerRef.current = setInterval(() => setTripTime(t => t+1), 1000);
@@ -64,6 +80,7 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
       analyserRef.current.fftSize = 256;
       const data = new Uint8Array(analyserRef.current.frequencyBinCount);
       const tick = () => {
+        if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(data);
         setMicLevel(Math.min(100, (data.reduce((a,b)=>a+b,0)/data.length)*2.5));
         animFrameRef.current = requestAnimationFrame(tick);
@@ -137,7 +154,7 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
     if (alertedRef.current) return;
     alertedRef.current = true;
     setAlertTriggered(true);
-    const location = "Cochabamba, Bolivia (GPS activo)";
+    const location = "Sucre, Bolivia (GPS activo)";
     setAlertDetails({ reason, text, time: new Date().toLocaleTimeString(), location });
     sendAlerts(reason, location);
   };
@@ -151,14 +168,12 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
     rec.onresult = e => {
       const latest = Array.from(e.results).map(r => r[0].transcript).join(" ");
       
-      // --- INTERRUPTOR DE VOZ PARA PRUEBAS ---
       const comandoParada = "viaje terminado";
       if (latest.toLowerCase().includes(comandoParada)) {
         console.log("Comando de voz detectado. Apagando sensores...");
-        handleStop(); // Apaga la interfaz, el mic y corta la ejecución
+        handleStop(); 
         return; 
       }
-      // ---------------------------------------
 
       const entry  = { text: latest, time: new Date().toLocaleTimeString(), id: Date.now() };
       const updated = [...transcriptRef.current.slice(-10), entry];
@@ -172,7 +187,6 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
     
     rec.onerror = () => {};
     
-    // Mantenemos la llave maestra de seguridad que creamos antes
     rec.onend = () => { 
       if (isListeningRef.current) { 
         try { rec.start(); } catch {} 
@@ -185,15 +199,14 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
 
  const handleStart = async () => {
     alertedRef.current = false;
+    isListeningRef.current = true;
     setIsActive(true); setAlertTriggered(false); setAlertDetails(null);
     setTranscript([]); transcriptRef.current = []; setSnsLog([]);
     setDetectedKw(null); setAiAnalysis(null); setTripTime(0);
     
-    // 1. Encendemos los sensores de audio de tu amigo
     await startMicLevel(); 
     startListening();
 
-    // 2. INYECTAMOS TU CÓDIGO DE GPS AQUÍ
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -209,6 +222,7 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
   };
 
   const handleStop = () => {
+    isListeningRef.current = false;
     setIsActive(false);
     try { recognitionRef.current?.stop(); } catch {}
     stopMicLevel();
@@ -312,7 +326,9 @@ export default function AgenteSeguridad({ conductorNFC, placaNFC }) {
           <div style={{ padding:20, borderBottom:"1px solid #1a1a2e" }}>
             <div style={{ fontSize:10, color:"#555", letterSpacing:3, marginBottom:14 }}>CONDUCTOR</div>
             <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:16 }}>
-              <div style={{ width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:"bold", color:"#7b7bff", border:"2px solid #3a3a9e", flexShrink:0 }}>CM</div>
+              <div style={{ width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a4e,#2d2d8e)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:"bold", color:"#7b7bff", border:"2px solid #3a3a9e", flexShrink:0 }}>
+                {driverInitials}
+              </div>
               <div>
                 <div style={{ fontSize:15, fontWeight:"bold", color:"#e0e0e0" }}>{DRIVER.name}</div>
                 <div style={{ fontSize:11, color:"#888", marginTop:2 }}>Placa: {DRIVER.plate}</div>
